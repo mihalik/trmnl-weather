@@ -1,0 +1,491 @@
+<!-- TRMNL Spec does not include the outer html -->
+
+<style>
+    /*
+  800×480, 1‑bit friendly. No grayscale, no colors. Big fonts for distance viewing.
+  Layout mirrors the previous canvas version (header, 5 columns, bottom band),
+  but everything is pure HTML/CSS, with inline SVG icons.
+  */
+    html,
+    body {
+        margin: 0;
+        background: #fff;
+        color: #000;
+    }
+
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+    }
+
+    img,
+    svg {
+        display: block;
+    }
+
+    body {
+        margin: 0;
+    }
+
+    .screen {
+        width: 800px;
+        height: 480px;
+        margin: 0 auto;
+        display: flex;
+        flex-direction: column;
+    }
+
+    @supports (display: grid) {
+        .screen {
+            display: grid;
+            grid-template-rows: 72px 1fr 80px;
+            grid-template-areas: "hdr" "days" "bottom";
+        }
+
+        .hdr {
+            grid-area: hdr;
+        }
+
+        .days {
+            grid-area: days;
+        }
+
+        .bottom {
+            grid-area: bottom;
+        }
+    }
+
+    /* Header */
+    .hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 10px 6px;
+    }
+
+    .title {
+        font: 700 36px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .updated {
+        font: 400 18px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .now {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+    }
+
+    .now .temp {
+        font: 700 48px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        line-height: 1;
+    }
+
+    .now .status {
+        font: 400 22px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    /* Day grid */
+    .days {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        padding: 0 8px;
+    }
+
+    .day {
+        text-align: center;
+        padding-top: 0;
+    }
+
+    .day+.day {
+        border-left: 2px solid #000;
+    }
+
+    .dow {
+        font: 700 24px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        margin-bottom: 4px;
+    }
+
+    .icon {
+        height: 110px;
+        display: grid;
+        place-items: center;
+    }
+
+    .icon svg {
+        width: 88px;
+        height: 88px;
+        stroke: #000;
+        fill: none;
+        stroke-width: 7;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        shape-rendering: crispEdges;
+    }
+
+    .icon svg * {
+        vector-effect: non-scaling-stroke;
+    }
+
+    .icon svg .fill {
+        fill: #000;
+        stroke: none;
+    }
+
+    .icon svg .fill-white {
+        fill: #fff;
+        stroke: none;
+    }
+
+
+
+    .hi {
+        font: 700 60px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        line-height: 1;
+        margin-top: 2px;
+    }
+
+    .lo {
+        font: 400 36px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        line-height: 1.1;
+    }
+
+    .pop,
+    .wind {
+        font: 400 20px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        margin-top: 4px;
+    }
+
+    /* Bottom band: Temperature range bars (min→max) */
+    .bottom {
+        padding: 0 8px 8px;
+        display: grid;
+        grid-template-rows: 1fr;
+    }
+
+    .range-box {
+        border: 2px solid #000;
+        position: relative;
+        height: 80px;
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+    }
+
+    .rcol {
+        position: relative;
+    }
+
+    .rcol+.rcol {
+        border-left: 2px solid #000;
+    }
+
+    .track {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        top: 4px;
+        bottom: 4px;
+        width: 0;
+        border-left: 2px solid #000;
+    }
+
+    .range {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 34px;
+        background: #000;
+    }
+
+
+    /* Crisp edges and disable selection (good for screenshots to TRMNL) */
+    * {
+        -webkit-user-select: none;
+        user-select: none;
+    }
+</style>
+<main class="screen" aria-label="TRMNL 5‑day weather forecast">
+    <header class="hdr">
+        <div class="now"><span class="temp" id="nowTemp">--°</span> <span class="status" id="nowStatus">—</span></div>
+        <div class="updated" id="updated">Updated —</div>
+    </header>
+
+    <section class="days" id="days">
+        <!-- JS will populate 5 .day panels here -->
+    </section>
+
+    <section class="bottom">
+        <div class="range-box" id="rangeBox"></div>
+    </section>
+</main>
+
+<script>
+    ; (() => {
+        // --- Static embedded JSON (no network / CORS needed) ---
+        const STATIC_DATA = JSON.parse(`{"location":{"latitude":30.267153,"longitude":-97.743057},"current":{"timestamp":"2025-08-08T01:51:00+00:00","temperature":{"unitCode":"wmoUnit:degC","value":32.8,"qualityControl":"V"},"dewpoint":{"unitCode":"wmoUnit:degC","value":18.3,"qualityControl":"V"},"windSpeed":{"unitCode":"wmoUnit:km_h-1","value":7.56,"qualityControl":"V"},"windDirection":{"unitCode":"wmoUnit:degree_(angle)","value":null,"qualityControl":"Z"},"barometricPressure":{"unitCode":"wmoUnit:Pa","value":101630,"qualityControl":"V"},"visibility":{"unitCode":"wmoUnit:m","value":16090,"qualityControl":"C"},"relativeHumidity":{"unitCode":"wmoUnit:percent","value":42.248048231884,"qualityControl":"V"},"description":"Clear","station":"KATT"},"forecast":{"periods":[{"number":1,"name":"Tonight","startTime":"2025-08-07T19:00:00-05:00","endTime":"2025-08-08T06:00:00-05:00","isDaytime":false,"temperature":77,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":0},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/skc?size=medium","shortForecast":"Clear","detailedForecast":"Clear, with a low around 77. Heat index values as high as 101. South southeast wind 0 to 5 mph."},{"number":2,"name":"Friday","startTime":"2025-08-08T06:00:00-05:00","endTime":"2025-08-08T18:00:00-05:00","isDaytime":true,"temperature":100,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":1},"windSpeed":"0 to 5 mph","windDirection":"S","icon":"https://api.weather.gov/icons/land/day/hot?size=medium","shortForecast":"Sunny","detailedForecast":"Sunny, with a high near 100. Heat index values as high as 104. South wind 0 to 5 mph."},{"number":3,"name":"Friday Night","startTime":"2025-08-08T18:00:00-05:00","endTime":"2025-08-09T06:00:00-05:00","isDaytime":false,"temperature":76,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":1},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/few?size=medium","shortForecast":"Mostly Clear","detailedForecast":"Mostly clear, with a low around 76. Heat index values as high as 102. South southeast wind 0 to 5 mph."},{"number":4,"name":"Saturday","startTime":"2025-08-09T06:00:00-05:00","endTime":"2025-08-09T18:00:00-05:00","isDaytime":true,"temperature":99,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":2},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/hot?size=medium","shortForecast":"Sunny","detailedForecast":"Sunny, with a high near 99. Heat index values as high as 101. South southeast wind 0 to 5 mph."},{"number":5,"name":"Saturday Night","startTime":"2025-08-09T18:00:00-05:00","endTime":"2025-08-10T06:00:00-05:00","isDaytime":false,"temperature":76,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":2},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/few?size=medium","shortForecast":"Mostly Clear","detailedForecast":"Mostly clear, with a low around 76. South southeast wind 0 to 5 mph."},{"number":6,"name":"Sunday","startTime":"2025-08-10T06:00:00-05:00","endTime":"2025-08-10T18:00:00-05:00","isDaytime":true,"temperature":96,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":9},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/few?size=medium","shortForecast":"Sunny","detailedForecast":"Sunny, with a high near 96. South southeast wind 0 to 5 mph."},{"number":7,"name":"Sunday Night","startTime":"2025-08-10T18:00:00-05:00","endTime":"2025-08-11T06:00:00-05:00","isDaytime":false,"temperature":76,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":9},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/few?size=medium","shortForecast":"Mostly Clear","detailedForecast":"Mostly clear, with a low around 76. South southeast wind 0 to 5 mph."},{"number":8,"name":"Monday","startTime":"2025-08-11T06:00:00-05:00","endTime":"2025-08-11T18:00:00-05:00","isDaytime":true,"temperature":97,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":20},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/few/tsra_hi,20?size=medium","shortForecast":"Sunny then Slight Chance Showers And Thunderstorms","detailedForecast":"A slight chance of showers and thunderstorms after 1pm. Sunny, with a high near 97. South southeast wind 0 to 5 mph. Chance of precipitation is 20%."},{"number":9,"name":"Monday Night","startTime":"2025-08-11T18:00:00-05:00","endTime":"2025-08-12T06:00:00-05:00","isDaytime":false,"temperature":76,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":20},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/tsra_hi,20/few?size=medium","shortForecast":"Slight Chance Showers And Thunderstorms then Mostly Clear","detailedForecast":"A slight chance of showers and thunderstorms before 7pm. Mostly clear, with a low around 76. South southeast wind 0 to 5 mph. Chance of precipitation is 20%."},{"number":10,"name":"Tuesday","startTime":"2025-08-12T06:00:00-05:00","endTime":"2025-08-12T18:00:00-05:00","isDaytime":true,"temperature":97,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":12},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/few?size=medium","shortForecast":"Sunny","detailedForecast":"Sunny, with a high near 97."},{"number":11,"name":"Tuesday Night","startTime":"2025-08-12T18:00:00-05:00","endTime":"2025-08-13T06:00:00-05:00","isDaytime":false,"temperature":77,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":12},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/few?size=medium","shortForecast":"Mostly Clear","detailedForecast":"Mostly clear, with a low around 77."},{"number":12,"name":"Wednesday","startTime":"2025-08-13T06:00:00-05:00","endTime":"2025-08-13T18:00:00-05:00","isDaytime":true,"temperature":98,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":10},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/sct?size=medium","shortForecast":"Mostly Sunny","detailedForecast":"Mostly sunny, with a high near 98."},{"number":13,"name":"Wednesday Night","startTime":"2025-08-13T18:00:00-05:00","endTime":"2025-08-14T06:00:00-05:00","isDaytime":false,"temperature":77,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":10},"windSpeed":"5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/night/sct?size=medium","shortForecast":"Partly Cloudy","detailedForecast":"Partly cloudy, with a low around 77."},{"number":14,"name":"Thursday","startTime":"2025-08-14T06:00:00-05:00","endTime":"2025-08-14T18:00:00-05:00","isDaytime":true,"temperature":97,"temperatureUnit":"F","temperatureTrend":"","probabilityOfPrecipitation":{"unitCode":"wmoUnit:percent","value":10},"windSpeed":"0 to 5 mph","windDirection":"SSE","icon":"https://api.weather.gov/icons/land/day/sct?size=medium","shortForecast":"Mostly Sunny","detailedForecast":"Mostly sunny, with a high near 97."}]}}`);
+
+        // Prefer Central Time for Austin if no timezone provided
+        let TZ = 'America/Chicago';
+
+        const $ = (sel, el = document) => el.querySelector(sel);
+        const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
+
+        const asNumber = (v) => (typeof v === 'number' ? v : v == null ? null : parseFloat(String(v)));
+        const prefer = (...vals) => vals.find(v => v !== undefined && v !== null);
+        const probPct = (v) => {
+            const n = asNumber(v);
+            if (!isFinite(n)) return 0;
+            if (n >= 0 && n < 1) return Math.round(n * 100); // 0.07 => 7%
+            return Math.max(0, Math.min(100, Math.round(n))); // 1 => 1%, 20 => 20%
+        };
+
+        const toF = (val, unitCode = '') => { const n = asNumber(val); if (!isFinite(n)) return null; const code = String(unitCode).toLowerCase(); if (code.includes('degc')) return n * 9 / 5 + 32; return n; };
+
+        function iconFrom(shortForecast = '', hint = '') {
+            const s = (String(shortForecast) + ' ' + String(hint)).toLowerCase();
+            if (s.includes('thunder') || s.includes('storm')) return 'storm';
+            if (s.includes('snow') || s.includes('sleet') || s.includes('flurr')) return 'snow';
+            if (s.includes('rain') || s.includes('shower') || s.includes('drizzle')) return 'rain';
+            if (s.includes('fog') || s.includes('mist') || s.includes('haze') || s.includes('smoke')) return 'fog';
+            if (s.includes('wind') || s.includes('breezy') || s.includes('gust')) return 'wind';
+            if (s.includes('partly') || s.includes('few') || s.includes('scattered')) return 'partly';
+            if (s.includes('cloud')) return 'cloud';
+            if (s.includes('sun') || s.includes('clear')) return 'sunny';
+            return 'cloud';
+        }
+
+        function svg(type) {
+            // New playful, consistent icons. One 120×120 viewBox for roomy edges.
+            const vb = '0 0 120 120';
+            const rays = (cx, cy, inner, outer) => Array.from({ length: 8 }, (_, i) => {
+                const a = i * Math.PI / 4; const x1 = cx + inner * Math.cos(a), y1 = cy + inner * Math.sin(a), x2 = cx + outer * Math.cos(a), y2 = cy + outer * Math.sin(a);
+                return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" />`;
+            }).join('');
+
+            const cloudBlob = (x = 0, y = 0, s = 1) => `
+          <g class="fill" transform="translate(${x} ${y}) scale(${s})">
+            <circle cx="42" cy="64" r="18" />
+            <circle cx="60" cy="56" r="22" />
+            <circle cx="82" cy="64" r="18" />
+            <rect x="34" y="64" width="52" height="22" rx="11" ry="11" />
+          </g>`;
+
+            const drops = (ys = 92) => [36, 54, 72, 90].map(x => `<path class="fill" d="M${x} ${ys} c 3 -8 8 -8 10 0 c -3 10 -7 10 -10 0 z" />`).join('');
+            const flakes = (ys = 90) => [42, 60, 78].map(x => `<g>
+            <line x1="${x}" y1="${ys - 6}" x2="${x}" y2="${ys + 6}" />
+            <line x1="${x - 6}" y1="${ys}" x2="${x + 6}" y2="${ys}" />
+            <line x1="${x - 4}" y1="${ys - 4}" x2="${x + 4}" y2="${ys + 4}" />
+            <line x1="${x + 4}" y1="${ys - 4}" x2="${x - 4}" y2="${ys + 4}" />
+          </g>`).join('');
+            const bolt = (x = 60, y = 86) => `<polygon class="fill" points="${x - 4},${y} ${x + 6},${y} ${x},${y + 12} ${x + 14},${y + 12} ${x - 6},${y + 34} ${x},${y + 16} ${x - 12},${y + 16}" />`;
+
+            switch (type) {
+                case 'sunny':
+                    // Clean sun (no face), inset rays to avoid clipping
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="sunny">
+              ${rays(60, 60, 30, 44)}
+              <circle cx="60" cy="60" r="22" />
+            </svg>`;
+                case 'partly':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="partly cloudy">
+              ${rays(52, 48, 22, 36)}
+              <circle cx="52" cy="48" r="18" />
+              ${cloudBlob(0, 6, 1.1)}
+            </svg>`;
+                case 'cloud':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="cloudy">
+              ${cloudBlob()}
+            </svg>`;
+                case 'rain':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="rain">
+              ${cloudBlob(0, -2, 1)}
+              ${drops(94)}
+            </svg>`;
+                case 'storm':
+                    // Higher cloud + bold zig‑zag bolt below it; add two drops for drama
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="thunderstorm">
+              ${cloudBlob(0, -6, 1)}
+              ${bolt(60, 86)}
+              ${[44, 76].map(x => `<path class=\"fill\" d=\"M${x} 96 c 3 -8 8 -8 10 0 c -3 10 -7 10 -10 0 z\" />`).join('')}
+            </svg>`;
+                case 'snow':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="snow">
+              ${cloudBlob(0, -2, 1)}
+              ${flakes(92)}
+            </svg>`;
+                case 'fog':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="fog">
+              ${cloudBlob(0, -2, 1)}
+              ${[96, 104, 112].map(y => `<path d=\"M24 ${y} q18 -6 36 0 t36 0\" />`).join('')}
+            </svg>`;
+                case 'wind':
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="wind">
+              <path d="M20 70 q20 -8 40 0 t40 0" />
+              <path d="M28 86 q16 -6 32 0 t32 0" />
+              <circle class="fill" cx="98" cy="70" r="3" />
+              <circle class="fill" cx="88" cy="86" r="2.5" />
+            </svg>`;
+                default:
+                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="unknown"><text x="60" y="70" font-size="56" text-anchor="middle">?</text></svg>`;
+            }
+        }
+
+        function normalizeForecast(data) {
+            // If API supplies a timezone, prefer it; otherwise keep Central
+            TZ = prefer(data.timezone, data.tz, TZ) || TZ;
+            const unitFromPeriods = data.forecast?.periods?.[0]?.temperatureUnit;
+            const tempUnit = (data.units && (data.units.temp || data.units.temperature)) || data.tempUnit || data.temperatureUnit || unitFromPeriods || 'F';
+            const tempSymbol = String(tempUnit).toUpperCase().includes('C') ? '°C' : '°F';
+            const updatedISO = prefer(data.updated, data.updateTime, data.current?.timestamp, new Date().toISOString());
+            const nowTempF = toF(data.current?.temperature?.value, data.current?.temperature?.unitCode);
+            const nowStatus = prefer(data.current?.description, data.current?.text, data.current?.shortForecast, '');
+
+            let days = [];
+
+            if (data.forecast?.periods) {
+                const periods = data.forecast.periods;
+                const out = [];
+                for (let i = 0; i < periods.length && out.length < 5; i++) {
+                    const p = periods[i];
+                    if (!p.isDaytime) continue;
+                    let low = asNumber(p.temperature);
+                    if (i + 1 < periods.length && !periods[i + 1].isDaytime) low = asNumber(periods[i + 1].temperature);
+                    const wind = [p.windDirection, p.windSpeed].filter(Boolean).join(' ');
+                    out.push({
+                        dateISO: p.startTime,
+                        high: asNumber(p.temperature),
+                        low,
+                        pop: probPct(p.probabilityOfPrecipitation?.value),
+                        wind,
+                        shortForecast: p.shortForecast,
+                        iconHint: p.icon || ''
+                    });
+                }
+                days = out;
+            } else if (Array.isArray(data.daily)) {
+                days = data.daily.map(d => {
+                    const dateISO = prefer(d.date, d.time, d.startTime, d.validTime, d.day, d.dt);
+                    const high = asNumber(prefer(d.high, d.tempMax, d.temperatureMax, d.max, d.tmax, d.high_f, d.highF));
+                    const low = asNumber(prefer(d.low, d.tempMin, d.temperatureMin, d.min, d.tmin, d.low_f, d.lowF));
+                    const pop = probPct(prefer(d.pop, d.precipProbability, d.precipitationProbability, d.precip, d.rainChance));
+                    const windSpeed = prefer(d.windSpeed, d.wind_speed, d.windSpeedMax, d.wind?.speed, d.wind_max);
+                    const windUnit = prefer(d.windUnit, d.wind_unit, data.units?.wind);
+                    const windDir = prefer(d.windDirection, d.wind_dir, d.wind?.dir, d.windBearing);
+                    const wind = (windDir || windSpeed) ? `${windDir ?? ''} ${typeof windSpeed === 'number' ? Math.round(windSpeed) : (windSpeed ?? '')} ${windUnit || (typeof windSpeed === 'number' ? 'mph' : '')}`.trim() : '';
+                    const shortForecast = prefer(d.shortForecast, d.summary, d.condition, d.text, d.weather);
+                    const iconHint = prefer(d.icon, d.iconCode, d.weatherCode);
+                    return { dateISO, high, low, pop, wind, shortForecast, iconHint };
+                });
+            } else if (data.properties?.periods) {
+                const periods = data.properties.periods;
+                const out = [];
+                for (let i = 0; i < periods.length && out.length < 5; i++) {
+                    const p = periods[i];
+                    if (!p.isDaytime) continue;
+                    let low = asNumber(p.temperature);
+                    if (i + 1 < periods.length && !periods[i + 1].isDaytime) low = asNumber(periods[i + 1].temperature);
+                    const wind = [p.windDirection, p.windSpeed].filter(Boolean).join(' ');
+                    out.push({
+                        dateISO: p.startTime,
+                        high: asNumber(p.temperature),
+                        low,
+                        pop: probPct(p.probabilityOfPrecipitation?.value),
+                        wind,
+                        shortForecast: p.shortForecast,
+                        iconHint: ''
+                    });
+                }
+                days = out;
+            }
+
+            days = days.filter(d => d && d.dateISO && isFinite(d.high) && isFinite(d.low)).slice(0, 5)
+                .map(d => ({
+                    ...d,
+                    dow: new Date(d.dateISO).toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ })
+                }));
+
+            return { days, updatedISO, nowTempF, nowStatus };
+        }
+
+        function render(model) {
+            const { days, updatedISO, nowTempF, nowStatus } = model;
+            $('#updated').textContent = `Updated ${new Date(updatedISO).toLocaleString('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit', month: 'short', day: '2-digit' })}`;
+            const nowTempEl = document.getElementById('nowTemp');
+            const nowStatusEl = document.getElementById('nowStatus');
+            const t = Number.isFinite(nowTempF) ? Math.round(nowTempF) + '°' : '--°';
+            const s = nowStatus || '';
+            if (nowTempEl) nowTempEl.textContent = t;
+            if (nowStatusEl) nowStatusEl.textContent = s;
+
+            const daysEl = $('#days');
+            daysEl.innerHTML = '';
+            days.forEach(d => {
+                const div = document.createElement('div');
+                div.className = 'day';
+                div.innerHTML = `
+            <div class="dow">${d.dow}</div>
+            <div class="icon">${svg(iconFrom(d.shortForecast, d.iconHint))}</div>
+            <div class="hi">${Math.round(d.high)}°</div>
+            <div class="lo">${Math.round(d.low)}°</div>
+            <div class="pop">${d.pop}% precip</div>
+            <div class="wind">${d.wind || ''}</div>
+          `;
+                daysEl.appendChild(div);
+            });
+
+            // Range bars
+            const box = $('#rangeBox');
+            box.innerHTML = '';
+            const allHighs = days.map(d => d.high);
+            const allLows = days.map(d => d.low);
+            const globalMin = Math.min(...allLows);
+            const globalMax = Math.max(...allHighs);
+
+            const innerTop = 6, innerBottom = 6;
+            const avail = Math.max(0, box.clientHeight - innerTop - innerBottom);
+            const scale = v => (v - globalMin) / (globalMax - globalMin || 1) * avail;
+
+            days.forEach(d => {
+                const col = document.createElement('div');
+                col.className = 'rcol';
+
+                const track = document.createElement('div');
+                track.className = 'track';
+
+                const range = document.createElement('div');
+                range.className = 'range';
+                const yTop = innerTop + (avail - scale(d.high));
+                const yBot = innerTop + (avail - scale(d.low));
+                range.style.top = Math.round(yTop) + 'px';
+                range.style.height = Math.max(2, Math.round(yBot - yTop)) + 'px';
+
+                col.appendChild(track);
+                col.appendChild(range);
+                box.appendChild(col);
+            });
+        }
+
+        function run() {
+            try {
+                // Data is loaded via liquid templates by the TRMNL server.  See example-weather.json
+                // for an example of the format data.  Each of the top-level items in the json are available
+                // as individual values in the liquid.
+                const current = JSON.parse(`{{current|json}}`);
+                const forecast = JSON.parse(`{{forecast|json}}`);
+                const location = JSON.parse(`{{location|json}}`);
+                const model = normalizeForecast({ current, forecast, location });
+
+                if (!model.days || model.days.length < 1) throw new Error('No daily data in static payload.');
+                render(model);
+            } catch (err) {
+                $('#days').innerHTML = `<div class=\"day\" style=\"grid-column: 1 / -1; text-align:left; padding:12px; font:700 24px system-ui\">Render error</div>
+                                   <div style=\"grid-column:1/-1; padding:0 12px 12px; font:400 18px system-ui\">${String(err)}</div>`;
+                $('#rangeBox').innerHTML = '';
+            }
+        }
+
+        run();
+    })();
+</script>
