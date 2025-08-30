@@ -39,12 +39,9 @@
     @supports (display: grid) {
         .screen {
             display: grid;
-            grid-template-rows: 72px 1fr 80px;
-            grid-template-areas: "hdr" "days" "bottom";
-        }
-
-        .hdr {
-            grid-area: hdr;
+            /* Taller top, shorter bottom */
+            grid-template-rows: 1fr 100px;
+            grid-template-areas: "days" "bottom";
         }
 
         .days {
@@ -56,42 +53,65 @@
         }
     }
 
-    /* Header */
-    .hdr {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 10px 6px;
-    }
-
-    .title {
-        font: 700 36px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    }
-
-    .updated {
-        font: 400 18px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    /* Bottom area: current temp (left) and detailed forecast (right) */
+    .bottom {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        grid-template-rows: 1fr auto; /* updated anchored below temp */
+        grid-template-areas: "temp text" "updated text";
+        gap: 8px 12px;
+        padding: 8px 12px 10px;
+        border-top: 2px solid #000;
     }
 
     .now {
         display: flex;
-        align-items: baseline;
-        gap: 10px;
+        align-items: flex-start;
+        justify-content: flex-start;
+        grid-area: temp;
+        flex-direction: column;
+        gap: 4px;
     }
 
     .now .temp {
-        font: 700 48px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        font: 700 64px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         line-height: 1;
     }
 
-    .now .status {
+    .detail {
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: flex-start;
+        padding-top: 2px;
+        grid-area: text;
+    }
+
+    .detail .text {
         font: 400 22px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        margin-bottom: 0;
+        /* Clamp to 3 lines */
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+
+    .updated {
+        grid-area: updated;
+        align-self: end;
+        justify-self: start;
+        text-align: left;
+        font: 400 14px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+        padding-left: 2px;
     }
 
     /* Day grid */
     .days {
         display: grid;
         grid-template-columns: repeat(5, 1fr);
-        padding: 0 8px;
+        /* Remove bottom padding so vertical dividers meet the bottom border */
+        padding: 20px 16px 0;
     }
 
     .day {
@@ -109,7 +129,7 @@
     }
 
     .icon {
-        height: 110px;
+        height: 114px; /* a touch taller to open space */
         display: grid;
         place-items: center;
     }
@@ -144,60 +164,24 @@
     .hi {
         font: 700 60px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         line-height: 1;
-        margin-top: 2px;
+        margin-top: 6px;
+        margin-bottom: 8px; /* more space to low temp */
     }
 
     .lo {
         font: 400 36px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
         line-height: 1.1;
+        margin-top: 8px; /* increase space between high and low */
+        margin-bottom: 6px;
     }
 
     .pop,
     .wind {
         font: 400 20px system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-        margin-top: 4px;
+        margin-top: 8px; /* more breathing room between lines */
     }
 
-    /* Bottom band: Temperature range bars (min→max) */
-    .bottom {
-        padding: 0 8px 8px;
-        display: grid;
-        grid-template-rows: 1fr;
-    }
-
-    .range-box {
-        border: 2px solid #000;
-        position: relative;
-        height: 80px;
-        display: grid;
-        grid-template-columns: repeat(5, 1fr);
-    }
-
-    .rcol {
-        position: relative;
-    }
-
-    .rcol+.rcol {
-        border-left: 2px solid #000;
-    }
-
-    .track {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        top: 4px;
-        bottom: 4px;
-        width: 0;
-        border-left: 2px solid #000;
-    }
-
-    .range {
-        position: absolute;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 34px;
-        background: #000;
-    }
+    /* Remove old range bars styling */
 
 
     /* Crisp edges and disable selection (good for screenshots to TRMNL) */
@@ -207,17 +191,16 @@
     }
 </style>
 <main class="screen" aria-label="TRMNL 5‑day weather forecast">
-    <header class="hdr">
-        <div class="now"><span class="temp" id="nowTemp">--°</span> <span class="status" id="nowStatus">—</span></div>
-        <div class="updated" id="updated">Updated —</div>
-    </header>
-
     <section class="days" id="days">
         <!-- JS will populate 5 .day panels here -->
     </section>
 
     <section class="bottom">
-        <div class="range-box" id="rangeBox"></div>
+        <div class="now"><span class="temp" id="nowTemp">--°</span></div>
+        <div class="detail">
+            <div class="text" id="detailText">—</div>
+        </div>
+        <div class="updated" id="updated">—</div>
     </section>
 </main>
 
@@ -343,6 +326,19 @@
             const nowStatus = prefer(data.current?.description, data.current?.text, data.current?.shortForecast, '');
 
             let days = [];
+            let detailedText = '';
+
+            const pickDetailedFromPeriods = (periods) => {
+                try {
+                    const now = new Date(updatedISO || Date.now());
+                    const found = periods.find(p => {
+                        const st = new Date(p.startTime);
+                        const et = new Date(p.endTime);
+                        return now >= st && now < et;
+                    }) || periods[0];
+                    return found?.detailedForecast || found?.shortForecast || '';
+                } catch { return ''; }
+            };
 
             if (data.forecast?.periods) {
                 const periods = data.forecast.periods;
@@ -364,6 +360,7 @@
                     });
                 }
                 days = out;
+                detailedText = pickDetailedFromPeriods(periods);
             } else if (Array.isArray(data.daily)) {
                 days = data.daily.map(d => {
                     const dateISO = prefer(d.date, d.time, d.startTime, d.validTime, d.day, d.dt);
@@ -398,6 +395,7 @@
                     });
                 }
                 days = out;
+                detailedText = pickDetailedFromPeriods(periods);
             }
 
             days = days.filter(d => d && d.dateISO && isFinite(d.high) && isFinite(d.low)).slice(0, 5)
@@ -406,18 +404,17 @@
                     dow: new Date(d.dateISO).toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ })
                 }));
 
-            return { days, updatedISO, nowTempF, nowStatus };
+            return { days, updatedISO, nowTempF, nowStatus, detailedText };
         }
 
         function render(model) {
-            const { days, updatedISO, nowTempF, nowStatus } = model;
-            $('#updated').textContent = `Updated ${new Date(updatedISO).toLocaleString('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit', month: 'short', day: '2-digit' })}`;
+            const { days, updatedISO, nowTempF, detailedText } = model;
+            $('#updated').textContent = `${new Date(updatedISO).toLocaleString('en-US', { timeZone: TZ, hour: '2-digit', minute: '2-digit', month: 'short', day: '2-digit' })}`;
             const nowTempEl = document.getElementById('nowTemp');
-            const nowStatusEl = document.getElementById('nowStatus');
+            const detailEl = document.getElementById('detailText');
             const t = Number.isFinite(nowTempF) ? Math.round(nowTempF) + '°' : '--°';
-            const s = nowStatus || '';
             if (nowTempEl) nowTempEl.textContent = t;
-            if (nowStatusEl) nowStatusEl.textContent = s;
+            if (detailEl) detailEl.textContent = detailedText || '';
 
             const daysEl = $('#days');
             daysEl.innerHTML = '';
@@ -435,36 +432,7 @@
                 daysEl.appendChild(div);
             });
 
-            // Range bars
-            const box = $('#rangeBox');
-            box.innerHTML = '';
-            const allHighs = days.map(d => d.high);
-            const allLows = days.map(d => d.low);
-            const globalMin = Math.min(...allLows);
-            const globalMax = Math.max(...allHighs);
-
-            const innerTop = 6, innerBottom = 6;
-            const avail = Math.max(0, box.clientHeight - innerTop - innerBottom);
-            const scale = v => (v - globalMin) / (globalMax - globalMin || 1) * avail;
-
-            days.forEach(d => {
-                const col = document.createElement('div');
-                col.className = 'rcol';
-
-                const track = document.createElement('div');
-                track.className = 'track';
-
-                const range = document.createElement('div');
-                range.className = 'range';
-                const yTop = innerTop + (avail - scale(d.high));
-                const yBot = innerTop + (avail - scale(d.low));
-                range.style.top = Math.round(yTop) + 'px';
-                range.style.height = Math.max(2, Math.round(yBot - yTop)) + 'px';
-
-                col.appendChild(track);
-                col.appendChild(range);
-                box.appendChild(col);
-            });
+            // Bar graphs removed per request
         }
 
         function run() {
@@ -482,7 +450,6 @@
             } catch (err) {
                 $('#days').innerHTML = `<div class=\"day\" style=\"grid-column: 1 / -1; text-align:left; padding:12px; font:700 24px system-ui\">Render error</div>
                                    <div style=\"grid-column:1/-1; padding:0 12px 12px; font:400 18px system-ui\">${String(err)}</div>`;
-                $('#rangeBox').innerHTML = '';
             }
         }
 
