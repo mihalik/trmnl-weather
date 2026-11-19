@@ -1,0 +1,1331 @@
+<!-- TRMNL Spec does not include the outer html -->
+<!--
+  "Fun" view: left half is an American Gothic style 1-bit line drawing of the
+  two of us, dressed for today's forecast (or tonight's, after dark), with the
+  weather in the sky behind us. Rare easter eggs appear now and then.
+  Right half: high/low, precip chance + amount, sunrise/sunset, and rules-driven
+  "Heads Up" highlights from the upcoming forecast.
+-->
+
+<style>
+    html,
+    body {
+        margin: 0;
+        background: #fff;
+        color: #000;
+    }
+
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    svg {
+        display: block;
+    }
+
+    .screen {
+        width: 800px;
+        height: 480px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 400px 1fr;
+        overflow: hidden;
+    }
+
+    .scene {
+        width: 400px;
+        height: 480px;
+        border-right: 2px solid #000;
+    }
+
+    .scene svg {
+        shape-rendering: geometricPrecision;
+    }
+
+    /* Right half: today's numbers + rules-driven highlights */
+    .panel {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        padding: 12px 18px 10px 20px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .panel svg {
+        fill: none;
+        stroke: #000;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+    }
+
+    .phead {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding-bottom: 6px;
+        border-bottom: 2px solid #000;
+    }
+
+    .phead .date {
+        font-weight: 700;
+        font-size: 24px;
+    }
+
+    .phead .updated {
+        font-size: 13px;
+    }
+
+    .stat {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 10px;
+    }
+
+    .stat .ico {
+        width: 48px;
+        height: 52px;
+    }
+
+    .stat .v {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    .stat .v + .v {
+        margin-left: 10px;
+    }
+
+    .big {
+        font-weight: 800;
+        font-size: 54px;
+        line-height: 1;
+    }
+
+    .mid {
+        font-weight: 500;
+        font-size: 40px;
+        line-height: 1;
+    }
+
+    .amt {
+        font-weight: 700;
+        font-size: 28px;
+        line-height: 1.1;
+    }
+
+    .sunv {
+        font-weight: 700;
+        font-size: 30px;
+        line-height: 1;
+    }
+
+    .sunv small {
+        font-size: 16px;
+        font-weight: 600;
+        margin-left: 2px;
+    }
+
+    .cap {
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 3px;
+    }
+
+    .stat.sun .ico {
+        width: 40px;
+        height: 40px;
+    }
+
+    .heads {
+        margin-top: 12px;
+        border-top: 2px solid #000;
+        padding-top: 6px;
+    }
+
+    .heads h2 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .heads ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .heads li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 20px;
+        line-height: 1.18;
+        margin-top: 6px;
+    }
+
+    .heads li svg {
+        width: 30px;
+        height: 30px;
+        stroke-width: 2.5;
+    }
+
+    .heads li span {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+</style>
+
+<main class="screen" aria-label="TRMNL fun weather">
+    <section class="scene" id="scene"></section>
+    <section class="panel" id="panel"></section>
+</main>
+
+<script>
+    ; (() => {
+        const TZ = 'America/Chicago';
+
+        // Clothing tiers (deg F, using the period's high by day / low by night)
+        const TANK_AT = 90;   // >= tank tops
+        const TEE_AT = 72;    // >= t-shirts
+        const LONG_AT = 45;   // >= long sleeves, below = coats + hats
+        const SCARF_BELOW = 32;
+        const WINDY_MPH = 15;
+        const EGG_CHANCE = 0.1; // per hour; the pick is stable within the hour
+
+        const asNumber = (v) => (typeof v === 'number' ? v : v == null ? null : parseFloat(String(v)));
+        const probPct = (v) => {
+            const n = asNumber(v);
+            if (!isFinite(n)) return null;
+            if (n >= 0 && n < 1) return Math.round(n * 100);
+            return Math.max(0, Math.min(100, Math.round(n)));
+        };
+
+        // Small seeded PRNG so drawings (and easter eggs) are stable between refreshes.
+        const rng = (seed) => () => {
+            seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+            let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+            t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+            return ((t ^ t >>> 14) >>> 0) / 4294967296;
+        };
+        const hash = (s) => { let h = 2166136261; for (const c of s) h = Math.imul(h ^ c.charCodeAt(0), 16777619); return h >>> 0; };
+
+        function localParts(now) {
+            const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+                timeZone: TZ, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', hourCycle: 'h23'
+            }).formatToParts(now).map(p => [p.type, p.value]));
+            return { year: +parts.year, month: +parts.month, day: +parts.day, hour: +parts.hour };
+        }
+
+        // ---------- Data: pick today's (or tonight's) period ----------
+
+        function pickPeriod(forecast, now) {
+            const periods = getPeriods(forecast);
+            if (periods.length) {
+                return periods.find(p => now >= new Date(p.startTime) && now < new Date(p.endTime)) || periods[0];
+            }
+            const d = Array.isArray(forecast?.daily) ? forecast.daily[0] : null;
+            if (!d) throw new Error('No forecast periods');
+            const hour = localParts(now).hour;
+            const isDaytime = hour >= 6 && hour < 18;
+            return {
+                name: isDaytime ? 'Today' : 'Tonight',
+                isDaytime,
+                temperature: asNumber(isDaytime ? (d.high ?? d.tempMax ?? d.max) : (d.low ?? d.tempMin ?? d.min)),
+                temperatureUnit: 'F',
+                windSpeed: String(d.windSpeed ?? d.wind_speed ?? ''),
+                probabilityOfPrecipitation: { value: d.pop ?? d.precipProbability },
+                shortForecast: d.shortForecast || d.summary || d.condition || ''
+            };
+        }
+
+        function analyze(p) {
+            const short = String(p.shortForecast || '').toLowerCase();
+            const detail = String(p.detailedForecast || '').toLowerCase();
+            const first = short.split(' then ')[0];
+            let temp = asNumber(p.temperature);
+            if (String(p.temperatureUnit || 'F').toUpperCase().startsWith('C')) temp = temp * 9 / 5 + 32;
+            const pop = probPct(p.probabilityOfPrecipitation?.value);
+            const mph = Math.max(0, ...(String(p.windSpeed || '').match(/\d+/g) || []).map(Number));
+
+            const night = p.isDaytime === false;
+            const thunder = /thunder|t-storm|tstorm/.test(short);
+            const snowWords = /snow|sleet|flurr|blizzard|freezing|ice/.test(short);
+            const wetWords = snowWords || /rain|shower|drizzle|thunder|storm/.test(short);
+            const wet = wetWords && ((pop != null && pop >= 40) || !/chance/.test(short) || /likely/.test(short));
+            const snow = wet && snowWords && !(temp > 36 && /rain/.test(short));
+            const rain = wet && !snow;
+
+            let sky;
+            if (wet) sky = 'overcast';
+            else if (/partly/.test(first)) sky = 'partly';
+            else if (/mostly cloudy|overcast/.test(first) || (/cloudy/.test(first) && !/partly/.test(first))) sky = 'cloudy';
+            else if (/mostly (sunny|clear)/.test(first)) sky = 'mostly';
+            else if (/sunny|clear|fair|hot/.test(first)) sky = 'clear';
+            else sky = 'partly';
+
+            const fog = /fog|haze|smoke|mist/.test(short);
+            const windy = mph >= WINDY_MPH || /breezy|windy|gust|blustery/.test(short + ' ' + detail);
+            const sunVisible = !night && ['clear', 'mostly', 'partly'].includes(sky) && !fog;
+            const tier = !isFinite(temp) ? 'tee' : temp >= TANK_AT ? 'tank' : temp >= TEE_AT ? 'tee' : temp >= LONG_AT ? 'long' : 'coat';
+
+            return {
+                start: p.startTime ? new Date(p.startTime) : null,
+                end: p.endTime ? new Date(p.endTime) : null,
+                temp, pop, mph, night, sky, fog, windy, thunder, rain, snow, tier,
+                scarf: isFinite(temp) && temp < SCARF_BELOW,
+                sunglasses: sunVisible,
+                sunVisible,
+                umbrella: rain
+            };
+        }
+
+        // ---------- Easter eggs ----------
+
+        const EGGS = {
+            owl: w => w.night && !w.rain && !w.snow,
+            shootingStar: w => w.night && ['clear', 'mostly'].includes(w.sky),
+            ufo: w => w.night && !w.rain,
+            airplane: w => !w.night && !w.thunder,
+            balloon: w => !w.night && !w.windy && !w.rain && !w.snow,
+            geese: w => !w.night && !w.rain,
+            birdOnHead: w => !w.night && !w.rain && !w.snow && w.tier !== 'coat',
+            kite: w => !w.night && w.windy && !w.rain,
+            rainbow: w => !w.night && w.rain,
+            snowman: w => w.snow,
+            catInWindow: w => !w.umbrella,
+            bigfoot: w => true,
+            deer: w => !w.rain,
+            rabbit: w => !w.rain && !w.snow,
+            blackhawks: w => !w.thunder
+        };
+
+        function pickEgg(w, now) {
+            const lp = localParts(now);
+            const r = rng(hash(`${lp.year}-${lp.month}-${lp.day}-${lp.hour}`));
+            if (r() >= EGG_CHANCE) return null;
+            const ok = Object.keys(EGGS).filter(k => EGGS[k](w));
+            return ok.length ? ok[Math.floor(r() * ok.length)] : null;
+        }
+
+        function seasonal(now) {
+            const { month, day } = localParts(now);
+            return {
+                pumpkin: month === 10 && day >= 15,
+                wreath: month === 12 && day <= 26,
+                fireworks: (month === 7 && day === 4) || (month === 12 && day === 31) || (month === 1 && day === 1),
+                party: (month === 2 && day === 17) || (month === 7 && day === 13)
+            };
+        }
+
+        // ---------- SVG helpers ----------
+
+        const f = (n) => Math.round(n * 10) / 10;
+
+        // Catmull-Rom through points -> dense polyline
+        function spline(pts, closed = true, steps = 6) {
+            const n = pts.length, out = [];
+            const get = i => closed ? pts[(i + n) % n] : pts[Math.max(0, Math.min(n - 1, i))];
+            const segs = closed ? n : n - 1;
+            for (let i = 0; i < segs; i++) {
+                const p0 = get(i - 1), p1 = get(i), p2 = get(i + 1), p3 = get(i + 2);
+                for (let s = 0; s < steps; s++) {
+                    const t = s / steps, t2 = t * t, t3 = t2 * t;
+                    out.push([0, 1].map(k => 0.5 * ((2 * p1[k]) + (-p0[k] + p2[k]) * t
+                        + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2
+                        + (-p0[k] + 3 * p1[k] - 3 * p2[k] + p3[k]) * t3)));
+                }
+            }
+            if (!closed) out.push(pts[n - 1]);
+            return out;
+        }
+
+        const poly = (pts, closed = true) => 'M' + pts.map(p => `${f(p[0])} ${f(p[1])}`).join(' L') + (closed ? ' Z' : '');
+
+        // Jagged outline for hair/beard/foliage
+        function fuzz(pts, amp, r, closed = true) {
+            const n = pts.length;
+            return poly(pts.map((p, i) => {
+                const a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+                const dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy) || 1;
+                const k = (i % 2 ? 1 : -0.5) * amp * (0.5 + r());
+                return [p[0] - dy / L * k, p[1] + dx / L * k];
+            }), closed);
+        }
+
+        const W = 'fill="#fff"';
+        const BLK = 'fill="#000"';
+        const thin = (w = 1.3) => `stroke-width="${w}"`;
+        // Draw sky marks with a white halo so they read on both day (white) and night (black) skies.
+        const halo = (inner, w = 6) => `<g stroke="#fff" stroke-width="${w}">${inner}</g><g>${inner}</g>`;
+
+        const HORIZON = 268;
+        const HIM_DY = 16; // shifts him down so our heads are level
+
+        // ---------- Sky ----------
+
+        function sun(cx, cy) {
+            const rays = Array.from({ length: 12 }, (_, i) => {
+                const a = i * Math.PI / 6, c = Math.cos(a), s = Math.sin(a);
+                const r1 = 28, r2 = i % 2 ? 36 : 42;
+                return `<line x1="${f(cx + r1 * c)}" y1="${f(cy + r1 * s)}" x2="${f(cx + r2 * c)}" y2="${f(cy + r2 * s)}"/>`;
+            }).join('');
+            return `<g stroke-width="3">${rays}<circle cx="${cx}" cy="${cy}" r="21" ${W}/></g>`;
+        }
+
+        // True new/full moon times (Meeus, Astronomical Algorithms ch. 49), accurate to a few minutes.
+        // k is an integer for new moons, integer + 0.5 for full moons. Returns a Julian Day.
+        function lunarPhaseJD(k) {
+            const rad = Math.PI / 180, T = k / 1236.85, full = k % 1 !== 0;
+            const E = 1 - 0.002516 * T - 0.0000074 * T * T;
+            const M = (2.5534 + 29.1053567 * k) * rad;
+            const Mp = (201.5643 + 385.81693528 * k + 0.0107582 * T * T) * rad;
+            const F = (160.7108 + 390.67050284 * k - 0.0016118 * T * T) * rad;
+            const O = (124.7746 - 1.56375588 * k) * rad;
+            const sin = Math.sin;
+            const c = full
+                ? -0.40614 * sin(Mp) + 0.17302 * E * sin(M) + 0.01614 * sin(2 * Mp) + 0.01043 * sin(2 * F)
+                  + 0.00734 * E * sin(Mp - M) - 0.00515 * E * sin(Mp + M) + 0.00209 * E * E * sin(2 * M)
+                  - 0.00111 * sin(Mp - 2 * F) - 0.00057 * sin(Mp + 2 * F) + 0.00056 * E * sin(2 * Mp + M)
+                  - 0.00042 * sin(3 * Mp) + 0.00042 * E * sin(M + 2 * F) + 0.00038 * E * sin(M - 2 * F)
+                  - 0.00024 * E * sin(2 * Mp - M) - 0.00017 * sin(O)
+                : -0.4072 * sin(Mp) + 0.17241 * E * sin(M) + 0.01608 * sin(2 * Mp) + 0.01039 * sin(2 * F)
+                  + 0.00739 * E * sin(Mp - M) - 0.00514 * E * sin(Mp + M) + 0.00208 * E * E * sin(2 * M)
+                  - 0.00111 * sin(Mp - 2 * F) - 0.00057 * sin(Mp + 2 * F) + 0.00056 * E * sin(2 * Mp + M)
+                  - 0.00042 * sin(3 * Mp) + 0.00042 * E * sin(M + 2 * F) + 0.00038 * E * sin(M - 2 * F)
+                  - 0.00024 * E * sin(2 * Mp - M) - 0.00017 * sin(O);
+            return 2451550.09766 + 29.530588861 * k + 0.00015437 * T * T + c;
+        }
+
+        // p: 0 = new, 0.5 = full. full: the full moon lands on this local date or within the current period.
+        function moonInfo(now, w) {
+            const jd = now / 864e5 + 2440587.5;
+            let k = Math.floor((jd - 2451550.09766) / 29.530588861);
+            while (lunarPhaseJD(k) > jd) k--;
+            while (lunarPhaseJD(k + 1) <= jd) k++;
+            const n0 = lunarPhaseJD(k), n1 = lunarPhaseJD(k + 1);
+            const fullAt = new Date((lunarPhaseJD(k + 0.5) - 2440587.5) * 864e5);
+            const a = localParts(fullAt), b = localParts(now);
+            const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
+            const inPeriod = w.start && w.end && fullAt >= w.start && fullAt < w.end;
+            return { p: (jd - n0) / (n1 - n0), full: sameDay || inPeriod };
+        }
+
+        function moon(cx, cy, now, w) {
+            const { p, full } = moonInfo(now, w);
+            if (full) {
+                // Full moon night: bigger moon with craters, glowing rings and sparkles
+                const r = 24;
+                const sparkle = (x, y, k) => `<path d="M${x} ${y - k} V${y + k} M${x - k} ${y} H${x + k}" stroke="#fff" ${thin(1.6)}/>`;
+                return `<circle cx="${cx}" cy="${cy}" r="${r + 8}" stroke="#fff" ${thin(1.5)} stroke-dasharray="3 4"/>`
+                    + `<circle cx="${cx}" cy="${cy}" r="${r + 15}" stroke="#fff" ${thin(1.2)} stroke-dasharray="1.5 5"/>`
+                    + `<circle cx="${cx}" cy="${cy}" r="${r}" ${W} stroke="#fff"/>`
+                    + `<circle cx="${cx - 8}" cy="${cy - 6}" r="5" ${thin(1.3)}/><circle cx="${cx + 7}" cy="${cy + 7}" r="6.5" ${thin(1.3)}/>`
+                    + `<circle cx="${cx + 9}" cy="${cy - 10}" r="2.5" ${thin(1.2)}/><circle cx="${cx - 9}" cy="${cy + 11}" r="2" ${thin(1.2)}/>`
+                    + sparkle(cx + 46, cy - 26, 5) + sparkle(cx - 40, cy + 34, 4) + sparkle(cx + 40, cy + 36, 3);
+            }
+            const r = 19;
+            const rx = f(Math.abs(Math.cos(2 * Math.PI * p)) * r);
+            const waxing = p < 0.5;
+            const outer = waxing ? 1 : 0;
+            const inner = waxing ? (p < 0.25 ? 0 : 1) : (p < 0.75 ? 0 : 1);
+            const lit = `M${cx} ${cy - r} A${r} ${r} 0 0 ${outer} ${cx} ${cy + r} A${rx} ${r} 0 0 ${inner} ${cx} ${cy - r} Z`;
+            return `<circle cx="${cx}" cy="${cy}" r="${r}" stroke="#fff" ${thin(1.2)} stroke-dasharray="2 4"/>`
+                + `<path d="${lit}" ${W} stroke="#fff" ${thin(1.5)}/>`;
+        }
+
+        function stars(r) {
+            let out = '';
+            for (let i = 0; i < 26; i++) {
+                const x = 8 + r() * 384, y = 8 + r() * 200;
+                if (Math.hypot(x - 62, y - 58) < 46) continue;
+                if (i % 6 === 0) {
+                    out += `<path d="M${f(x)} ${f(y - 5)} V${f(y + 5)} M${f(x - 5)} ${f(y)} H${f(x + 5)}" stroke="#fff" ${thin(1.6)}/>`;
+                } else {
+                    out += `<circle cx="${f(x)}" cy="${f(y)}" r="${f(1 + r() * 0.9)}" fill="#fff" stroke="none"/>`;
+                }
+            }
+            return out;
+        }
+
+        // Cloud: thick outline pass then white fill pass = one clean union outline.
+        function cloud(x, y, s = 1) {
+            const shapes = `<rect x="-34" y="-2" width="68" height="24" rx="12"/><circle cx="6" cy="-4" r="17"/><circle cx="-14" cy="2" r="11"/><circle cx="22" cy="4" r="10"/>`;
+            return `<g transform="translate(${x} ${y}) scale(${s})">`
+                + `<g fill="#fff" stroke-width="${f(5 / s)}">${shapes}</g><g fill="#fff" stroke="none">${shapes}</g></g>`;
+        }
+
+        function clouds(w) {
+            const sets = {
+                clear: [],
+                mostly: [[318, 52, 0.9]],
+                partly: [[318, 50, 1], [148, 34, 0.75], [96, 92, 0.6]],
+                cloudy: [[60, 50, 1.05], [170, 28, 0.9], [300, 46, 1.1], [360, 100, 0.7], [110, 110, 0.7]],
+                overcast: [[50, 40, 1.15], [150, 26, 1], [262, 34, 1.15], [360, 56, 1], [96, 96, 0.8], [318, 108, 0.8]]
+            };
+            return (sets[w.sky] || []).map(c => cloud(...c)).join('');
+        }
+
+        function windLines() {
+            const lines = [
+                'M262 128 H350 A10 10 0 1 0 340 118',
+                'M18 146 H92 A9 9 0 1 1 83 155',
+                'M300 158 H386',
+                'M24 172 H70'
+            ].map(d => `<path d="${d}"/>`).join('');
+            const leaf = (x, y, a) => `<g transform="translate(${x} ${y}) rotate(${a})"><path d="M0 0 Q8 -7 16 0 Q8 7 0 0 Z M0 0 H18" ${W}/></g>`;
+            return halo(`<g stroke-width="2.5">${lines}</g>`) + leaf(366, 132, -20) + leaf(108, 168, 25);
+        }
+
+        function rainLines(r) {
+            let d = '';
+            for (let y = 6; y < 300; y += 24) {
+                for (let x = (y / 24 % 2) * 12; x < 410; x += 24) {
+                    const jx = x + r() * 8, jy = y + r() * 8;
+                    d += `M${f(jx)} ${f(jy)} l-5 13 `;
+                }
+            }
+            return halo(`<path d="${d}" stroke-width="2"/>`, 5);
+        }
+
+        function snowflakes(r) {
+            let out = '';
+            for (let i = 0; i < 34; i++) {
+                const x = 6 + r() * 388, y = 6 + r() * 290, s = 3 + r() * 2.5;
+                out += `<path d="M${f(x - s)} ${f(y)} H${f(x + s)} M${f(x - s * .5)} ${f(y - s * .87)} L${f(x + s * .5)} ${f(y + s * .87)} M${f(x - s * .5)} ${f(y + s * .87)} L${f(x + s * .5)} ${f(y - s * .87)}"/>`;
+            }
+            return halo(`<g stroke-width="1.8">${out}</g>`, 5);
+        }
+
+        function fogLines() {
+            const rows = [[176, 10], [200, 40], [226, 0], [250, 30]];
+            return halo(rows.map(([y, o]) => `<path d="M${-20 + o} ${y} H420" stroke-dasharray="46 14"/>`).join(''), 6);
+        }
+
+        const bolt = `<path d="M232 62 L214 96 L228 96 L218 124 L246 86 L231 86 L242 62 Z" ${BLK} stroke="#fff" stroke-width="2"/>`;
+
+        // ---------- Background: house, trees ----------
+
+        function farm(w, r, season) {
+            let s = '';
+            // Ground
+            s += `<path d="M0 ${HORIZON} H400"/>`;
+            const tick = Array.from({ length: 14 }, (_, i) => { const x = 6 + i * 29 + r() * 10; return `M${f(x)} ${HORIZON + 6} l3 -5 l3 5`; }).join(' ');
+            s += `<path d="${tick}" ${thin(1.2)}/>`;
+
+            // Tall tree + bush (left)
+            s += `<path d="M26 ${HORIZON} V238 M26 252 L18 244" stroke-width="3"/>`;
+            const poplar = spline([[26, 164], [38, 182], [43, 210], [38, 236], [26, 244], [14, 236], [9, 210], [14, 182]], true, 5);
+            s += `<path d="${fuzz(poplar, 1.4, r)}" ${W}/>`;
+            s += `<path d="M20 190 q3 -3 6 0 M28 206 q3 -3 6 0 M18 220 q3 -3 6 0 M28 230 q3 -3 6 0" ${thin(1.2)}/>`;
+            const bush = spline([[40, 252], [50, 238], [64, 236], [76, 246], [80, 262], [70, 268], [44, 268], [36, 262]], true, 4);
+            s += `<path d="${fuzz(bush, 1.3, r)}" ${W}/>`;
+            s += `<path d="M52 250 q3 -3 6 0 M64 256 q3 -3 6 0" ${thin(1.2)}/>`;
+
+            // Tree (right)
+            s += `<path d="M356 ${HORIZON} V226 M356 244 L344 232 M356 238 L368 228" stroke-width="3"/>`;
+            const canopy = spline([[356, 186], [380, 194], [392, 214], [386, 236], [362, 242], [338, 238], [326, 218], [334, 196]], true, 5);
+            s += `<path d="${fuzz(canopy, 1.6, r)}" ${W}/>`;
+            s += `<path d="M346 206 q4 -4 8 0 M366 216 q4 -4 8 0 M342 226 q4 -4 8 0 M362 232 q3 -3 6 0" ${thin(1.2)}/>`;
+
+            // House: chimney, body, gable roof, siding, gothic window, door
+            s += `<path d="M244 128 V92 H258 V136" ${W}/>`;
+            if (w.tier === 'coat') {
+                s += halo(`<path d="M251 86 q-8 -10 2 -18 q10 -8 2 -18 q-6 -8 4 -16" ${thin(2)}/>`, 5);
+            }
+            s += `<rect x="128" y="160" width="144" height="${HORIZON - 160}" ${W}/>`;
+            s += `<defs><clipPath id="houseClip"><path d="M130 ${HORIZON} V164 L200 82 L270 164 V${HORIZON} Z"/></clipPath></defs>`;
+            let siding = '';
+            for (let x = 136; x < 270; x += 9) siding += `M${x} 80 V${HORIZON} `;
+            s += `<path d="M114 168 L200 78 L286 168" ${W} stroke-width="3"/>`;
+            s += `<path d="${siding}" ${thin(1)} clip-path="url(#houseClip)"/>`;
+            s += `<path d="M110 170 L200 74 L290 170" stroke-width="3.5"/>`;
+            s += `<path d="M128 174 H272" ${thin(1.5)}/>`;
+
+            // Gothic window (the painting's signature)
+            const gw = 'M187 154 V128 Q187 112 200 100 Q213 112 213 128 V154 Z';
+            s += `<path d="${gw}" ${W} stroke-width="2.5"/>`;
+            if (w.night) s += `<path d="${gw}" ${BLK} stroke="none" transform="translate(200 127) scale(.78) translate(-200 -127)"/>`;
+            s += `<path d="M200 104 V154 M188 130 H212" ${thin(1.5)} ${w.night ? 'stroke="#fff"' : ''}/>`;
+            s += `<path d="M183 158 H217" stroke-width="2.5"/>`;
+
+            // Windows + door on the body (mostly hidden behind us)
+            for (const x of [146, 232]) {
+                s += `<rect x="${x}" y="186" width="22" height="30" ${W}/><path d="M${x + 11} 186 V216 M${x} 201 H${x + 22}" ${thin(1.3)}/>`;
+            }
+            s += `<rect x="188" y="222" width="24" height="${HORIZON - 222}" ${W}/><circle cx="207" cy="248" r="1.6" ${BLK}/>`;
+            s += `<path d="M180 ${HORIZON} H220" stroke-width="3"/>`;
+
+            if (season.wreath) {
+                s += `<circle cx="200" cy="234" r="7" ${W} stroke-width="3" stroke-dasharray="3 2"/><path d="M196 242 l4 -3 l4 3" ${thin(1.5)}/>`;
+            }
+            if (season.pumpkin) {
+                s += `<g transform="translate(176 ${HORIZON - 9})"><ellipse rx="10" ry="8" ${W}/><path d="M-3 -7 Q0 0 -3 7 M3 -7 Q0 0 3 7 M0 -8 l2 -5" ${thin(1.3)}/></g>`;
+            }
+            return s;
+        }
+
+        // ---------- People ----------
+
+        // Striped cone party hat, base centered at (x, y), tilted by deg.
+        function partyHat(x, y, deg, r) {
+            const band = (t) => { const hw = 17 * (1 - t); return `M${f(-hw)} ${f(-40 * t)} L${f(hw)} ${f(-40 * t)}`; };
+            return `<g transform="translate(${x} ${y}) rotate(${deg})">`
+                + `<path d="M-17 0 L0 -40 L17 0 Q0 5 -17 0 Z" ${W} stroke-width="2.4"/>`
+                + `<path d="${[0.25, 0.5, 0.75].map(band).join(' ')}" stroke-width="3"/>`
+                + `<circle cx="-6" cy="-5" r="1.8" ${BLK}/><circle cx="6" cy="-6" r="1.8" ${BLK}/><circle cx="0" cy="-15" r="1.8" ${BLK}/><circle cx="-3" cy="-26" r="1.5" ${BLK}/>`
+                + `<path d="${fuzz(spline([[0, -50], [6, -46], [7, -40], [3, -35], [-3, -35], [-7, -40], [-6, -46]], true, 3), 1.6, r)}" ${W} stroke-width="2"/>`
+                + `</g>`;
+        }
+
+        // Her: left, gray bob, rimless glasses, big smile, ring pendant.
+        function her(w, r, season) {
+            let s = '';
+            const cx = 118;
+            // Hair (back silhouette)
+            const hairPts = spline([[118, 207], [142, 210], [156, 226], [161, 252], [160, 276], [168, 297], [152, 303], [118, 305], [84, 303], [68, 297], [76, 276], [75, 252], [80, 226], [94, 210]], true, 5);
+            s += `<path d="${fuzz(hairPts, 1.1, r)}" ${W}/>`;
+
+            // Torso (with arms as part of the silhouette)
+            s += `<path d="M28 480 L34 374 Q38 328 78 318 Q98 313 106 306 L130 306 Q138 313 158 318 Q198 328 202 374 L208 480 Z" ${W}/>`;
+
+            // Neck / neckline
+            const neckline = w.tier === 'tank' ? 'L102 310 Q118 346 134 310' : 'L104 306 L118 338 L132 306';
+            s += `<path d="M106 278 V302 ${neckline} L130 302 V278 Z" ${W}/>`;
+
+            // Clothing details
+            s += `<path d="M70 364 Q66 420 66 480 M166 364 Q170 420 170 480" ${thin(1.6)}/>`;
+            if (w.tier === 'tank') {
+                s += `<path d="M90 316 L88 366 Q76 384 36 392 M146 316 L148 366 Q160 384 200 392" ${thin(2)}/>`;
+            } else if (w.tier === 'tee') {
+                s += `<path d="M34 392 Q50 398 68 394 M168 394 Q186 398 202 392" ${thin(2)}/>`;
+            } else if (w.tier === 'long') {
+                // Cardigan over the V-neck
+                s += `<path d="M102 309 Q96 360 96 480 M134 309 Q140 360 140 480" ${thin(2)}/>`;
+                s += [380, 420, 460].map(y => `<circle cx="${y === 460 ? 97 : 98}" cy="${y}" r="2.6" ${BLK}/>`).join('');
+            }
+            if (w.tier === 'coat') {
+                // Puffer coat: stand collar, zipper, quilting
+                s += `<path d="M98 296 Q118 304 138 296 L140 318 Q118 326 96 318 Z" ${W}/>`;
+                s += `<path d="M118 326 V480" stroke-width="2"/><path d="M118 330 V480" ${thin(1)} stroke-dasharray="1 3" transform="translate(3 0)"/>`;
+                s += `<path d="M36 372 Q76 380 114 378 M122 378 Q160 380 200 372 M34 422 Q76 430 114 428 M122 428 Q160 430 202 422 M32 466 Q76 474 114 472 M122 472 Q160 474 204 466" ${thin(1.6)}/>`;
+            } else {
+                // Ring pendant necklace
+                s += `<path d="M107 304 Q110 330 117 346 M129 304 Q126 330 119 346" ${thin(0.9)}/>`;
+                s += `<circle cx="118" cy="351" r="5" ${thin(1.8)}/>`;
+            }
+            if (w.scarf) {
+                s += `<path d="M96 300 Q118 312 140 300 L142 318 Q118 330 94 318 Z" ${W}/>`;
+                s += `<path d="M100 320 L92 396 L110 398 L112 324 Z" ${W}/><path d="M94 384 L110 386 M95 400 l0 8 M100 400 l0 8 M105 400 l0 8 M110 400 l0 8" ${thin(1.4)}/>`;
+            }
+
+            // Face
+            s += `<ellipse cx="${cx}" cy="258" rx="30" ry="37" ${W}/>`;
+            // Hair over the forehead: white cap above the hairline, then the hairline stroke
+            s += `<path d="M88 258 Q89 222 126 213 Q149 222 149 256 L160 256 L157 222 L118 205 L79 222 L76 258 Z" fill="#fff" stroke="none"/>`;
+            s += `<path d="M88 258 Q89 222 126 213 Q149 222 149 256" stroke-width="2"/>`;
+            s += `<path d="M126 213 Q100 226 85 274 M126 213 Q108 220 94 240 M127 214 Q146 232 154 282 M130 210 Q144 214 152 226 M84 282 Q80 292 72 297 M154 284 Q158 292 165 297 M112 209 Q96 214 86 232" ${thin(1.1)}/>`;
+
+            // Hat
+            if (season.party) {
+                s += partyHat(114, 214, -14, r);
+            } else if (w.tier === 'coat') {
+                s += `<path d="M79 246 Q80 198 118 193 Q156 198 157 246 Q118 226 79 246 Z" ${W}/>`;
+                s += `<path d="M81 234 Q118 214 155 234" ${thin(1.6)}/>`;
+                for (let i = 0; i <= 12; i++) {
+                    const x = 83 + i * 6;
+                    const t = (x - 81) / 74; const yTop = 234 - 4 * 20 * t * (1 - t) - 0; const yBot = 246 - 4 * 20 * t * (1 - t);
+                    s += `<path d="M${f(x)} ${f(yTop + 1)} V${f(yBot - 1)}" ${thin(1)}/>`;
+                }
+                s += `<path d="${fuzz(spline([[118, 178], [127, 182], [130, 190], [126, 198], [118, 200], [110, 198], [106, 190], [109, 182]], true, 3), 1.5, r)}" ${W}/>`;
+            }
+
+            // Features
+            s += `<path d="M97 241 Q104 236 112 240 M124 240 Q132 236 139 241" stroke-width="2"/>`;
+            if (w.sunglasses) {
+                s += `<path d="M94 249 Q104 246 114 249 Q114 262 104 263 Q94 262 94 249 Z M122 249 Q132 246 142 249 Q142 262 132 263 Q122 262 122 249 Z" ${BLK} stroke-width="1.5"/>`;
+                s += `<path d="M98 252 l4 -3 M126 252 l4 -3" stroke="#fff" ${thin(1.3)}/>`;
+                s += `<path d="M114 251 Q118 248 122 251 M94 250 L86 248 M142 250 L150 248" ${thin(1.5)}/>`;
+            } else {
+                s += `<circle cx="104" cy="255" r="2.3" ${BLK} stroke="none"/><circle cx="132" cy="255" r="2.3" ${BLK} stroke="none"/>`;
+                s += `<path d="M98 252 q6 -3 12 0 M126 252 q6 -3 12 0" ${thin(1)}/>`;
+                s += `<rect x="94" y="247" width="20" height="15" rx="6" ${thin(1)}/><rect x="122" y="247" width="20" height="15" rx="6" ${thin(1)}/>`;
+                s += `<path d="M114 252 Q118 249 122 252 M94 251 L86 249 M142 251 L150 249" ${thin(1)}/>`;
+            }
+            s += `<path d="M118 258 Q116 266 113 269 Q117 272 122 270" ${thin(1.8)}/>`;
+            s += `<path d="M103 277 Q118 296 133 277 Q118 282 103 277 Z" ${W} stroke-width="2"/>`;
+            s += `<path d="M107 281 Q118 286 129 281" ${thin(1)}/>`;
+            s += `<path d="M99 272 q-2 4 1 8 M137 272 q2 4 -1 8" ${thin(1.2)}/>`;
+            return s;
+        }
+
+        // Him: right, bald with short sides, rectangular glasses, big beard.
+        function him(w, r, egg, season) {
+            let s = '';
+            const cx = 282;
+
+            // Torso
+            const torso = 'M194 480 L200 374 Q206 328 246 318 Q266 312 272 304 L292 304 Q298 312 318 318 Q358 328 364 374 L370 480 Z';
+            s += `<defs><pattern id="plaid" width="18" height="18" patternUnits="userSpaceOnUse">`
+                + `<rect width="18" height="18" fill="#fff" stroke="none"/>`
+                + `<path d="M0 4 H18 M0 7 H18 M4 0 V18 M7 0 V18" stroke-width="1.3"/>`
+                + `<path d="M0 14 H18 M14 0 V18" stroke-width="0.8" stroke-dasharray="2 2"/></pattern></defs>`;
+            const torsoFill = w.tier === 'long' ? 'fill="url(#plaid)"' : W;
+            s += `<path d="${torso}" ${torsoFill}/>`;
+            s += `<path d="${torso}" fill="none" stroke-width="2.5"/>`;
+            s += `<path d="M236 364 Q232 420 232 480 M330 364 Q334 420 334 480" ${thin(1.6)}/>`;
+
+            if (w.tier === 'tank') {
+                s += `<path d="M252 316 L248 372 Q238 390 202 398 M312 316 L316 372 Q326 390 362 398" ${thin(2)}/>`;
+            } else if (w.tier === 'tee') {
+                s += `<path d="M200 394 Q216 400 234 396 M332 396 Q348 400 364 394" ${thin(2)}/>`;
+            } else if (w.tier === 'long') {
+                s += `<path d="M282 350 V480" ${thin(2)}/>` + [384, 418, 452].map(y => `<circle cx="287" cy="${y}" r="2.6" ${W} stroke-width="1.5"/>`).join('');
+            } else if (w.tier === 'coat') {
+                // Canvas work jacket with corduroy collar
+                s += `<path d="M282 350 V480 M290 350 V480" ${thin(2)}/>`;
+                s += `<path d="M216 446 H252 V460 M312 446 H348 V460" ${thin(2)}/>`;
+                s += [372, 404, 436].map(y => `<path d="M206 ${y} q4 3 8 0 M350 ${y} q4 3 8 0" ${thin(1)}/>`).join('');
+            }
+            // Collar points beside the beard
+            if (w.tier === 'long' || w.tier === 'coat') {
+                const big = w.tier === 'coat';
+                s += `<path d="M262 310 L${big ? 242 : 250} ${big ? 350 : 338} L${big ? 268 : 270} ${big ? 334 : 326} Z M302 310 L${big ? 322 : 314} ${big ? 350 : 338} L${big ? 296 : 294} ${big ? 334 : 326} Z" ${W} stroke-width="2"/>`;
+                if (big) s += `<path d="M252 322 l-4 10 M258 324 l-5 12 M312 322 l4 10 M306 324 l5 12" ${thin(1)}/>`;
+            }
+            if (w.scarf) {
+                s += `<path d="M250 314 Q282 330 314 314 L318 330 Q282 346 246 330 Z" ${W}/>`;
+                s += `<path d="M300 334 L306 420 L322 418 L314 332 Z" ${W}/><path d="M304 360 L318 358 M304 390 L320 388 M307 422 l1 8 M312 421 l1 8 M317 420 l1 8" ${thin(1.4)}/>`;
+            }
+
+            // Ears + head
+            s += `<ellipse cx="247" cy="238" rx="6" ry="11" ${W}/><ellipse cx="317" cy="238" rx="6" ry="11" ${W}/>`;
+            s += `<path d="M246 233 q3 4 0 9 M318 233 q-3 4 0 9" ${thin(1.2)}/>`;
+            s += `<ellipse cx="${cx}" cy="236" rx="35" ry="45" ${W}/>`;
+            // Short hair on the sides only
+            s += `<path d="${fuzz(spline([[250, 242], [249, 226], [252, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
+            s += `<path d="${fuzz(spline([[314, 242], [315, 226], [312, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
+            if (season.party) {
+                s += partyHat(286, 196, 14, r);
+            } else if (w.tier === 'coat') {
+                s += `<path d="M245 228 Q244 180 282 175 Q320 180 319 228 Q282 208 245 228 Z" ${W}/>`;
+                s += `<path d="M246 216 Q282 196 318 216" ${thin(1.6)}/>`;
+                for (let i = 0; i <= 12; i++) {
+                    const x = 249 + i * 5.5; const t = (x - 246) / 72;
+                    s += `<path d="M${f(x)} ${f(216 - 80 * t * (1 - t) + 1)} V${f(228 - 80 * t * (1 - t) - 1)}" ${thin(1)}/>`;
+                }
+                s += `<path d="${fuzz(spline([[282, 158], [291, 162], [294, 170], [290, 178], [282, 180], [274, 178], [270, 170], [273, 162]], true, 3), 1.5, r)}" ${W}/>`;
+            }
+            if (egg === 'birdOnHead' && !season.party) {
+                s += `<g transform="translate(286 182)"><path d="M-10 0 Q-10 -12 2 -12 Q8 -12 10 -6 L16 -4 L10 -2 Q8 6 -2 6 L-16 4 Z" ${W} stroke-width="2"/><circle cx="5" cy="-7" r="1.4" ${BLK}/><path d="M-4 -4 Q0 2 6 0 M-2 6 V10 M3 6 V10" ${thin(1.4)}/></g>`;
+            }
+
+            // Brows, glasses, eyes, nose
+            s += `<path d="M258 221 Q268 215 277 219 M287 219 Q296 215 306 221" stroke-width="2.4"/>`;
+            if (w.sunglasses) {
+                s += `<rect x="256" y="226" width="23" height="15" rx="3" ${BLK} stroke-width="2"/><rect x="285" y="226" width="23" height="15" rx="3" ${BLK} stroke-width="2"/>`;
+                s += `<path d="M260 231 l5 -3 M289 231 l5 -3" stroke="#fff" ${thin(1.3)}/>`;
+            } else {
+                s += `<circle cx="268" cy="234" r="2.3" ${BLK} stroke="none"/><circle cx="296" cy="234" r="2.3" ${BLK} stroke="none"/>`;
+                s += `<path d="M256 240 V230 Q256 226 260 226 H275 Q279 226 279 230 V240 M285 240 V230 Q285 226 289 226 H304 Q308 226 308 230 V240" stroke-width="2"/>`;
+                s += `<path d="M257 240 Q268 243 278 240 M286 240 Q296 243 307 240" ${thin(0.9)}/>`;
+            }
+            s += `<path d="M279 230 Q282 227 285 230 M256 230 L248 229 M308 230 L316 229" stroke-width="1.8"/>`;
+            s += `<path d="M282 238 Q279 250 276 254 Q281 259 288 255" stroke-width="2"/>`;
+
+            // Beard: full and wide, squared off at the bottom
+            const beard = spline([[248, 222], [243, 250], [240, 280], [241, 310], [245, 332], [258, 341], [282, 343], [306, 341], [319, 332], [323, 310], [324, 280], [321, 250], [316, 222], [312, 244], [302, 257], [292, 261], [282, 260], [272, 261], [262, 257], [252, 244]], true, 7);
+            s += `<path d="${fuzz(beard, 0.9, r)}" ${W} stroke-width="2"/>`;
+            // Texture: short wavy strokes flowing down and toward the middle
+            let strands = '';
+            for (let row = 0; row < 5; row++) {
+                const y = 280 + row * 12;
+                const half = [34, 37, 38, 37, 34][row];
+                for (let x = cx - half + 4 + (row % 2) * 5; x < cx + half - 3; x += 10) {
+                    const lean = (cx - x) * 0.12, jy = y + (r() - .5) * 5;
+                    strands += `M${f(x)} ${f(jy)} q${f(lean / 2 - 2)} 5 ${f(lean)} 10 `;
+                }
+            }
+            s += `<path d="${strands}" ${thin(1.1)}/>`;
+            // Mustache + smile
+            s += `<path d="${fuzz(spline([[262, 270], [270, 260], [282, 263], [294, 260], [302, 270], [292, 267], [282, 269], [272, 267]], true, 4), 1.2, r)}" ${W} stroke-width="1.8"/>`;
+            s += `<path d="M269 274 Q282 284 295 274" stroke-width="2.2"/>`;
+            s += `<path d="M271 276 Q282 281 293 276" ${thin(1)}/>`;
+
+            if (w.umbrella) s += umbrellaHand(w);
+            return s;
+        }
+
+        function forearm(w, hx, hy) {
+            const sleeve = w.tier === 'long' ? 'fill="url(#plaid)"' : W;
+            let s = `<path d="M${hx - 12} ${hy + 8} L${hx + 6} 480 L${hx + 46} 480 L${hx + 13} ${hy + 6} Z" ${sleeve}/>`;
+            s += `<path d="M${hx - 12} ${hy + 8} L${hx + 6} 480 L${hx + 46} 480 L${hx + 13} ${hy + 6} Z" fill="none"/>`;
+            if (w.tier === 'long' || w.tier === 'coat') {
+                s += `<path d="M${hx - 10} ${hy + 22} L${hx + 19} ${hy + 18}" stroke-width="2"/>`;
+            }
+            // Fist
+            s += `<rect x="${hx - 14}" y="${hy - 15}" width="28" height="28" rx="9" ${W}/>`;
+            s += `<path d="M${hx - 14} ${hy - 5} H${hx + 4} M${hx - 14} ${hy + 3} H${hx + 4} M${hx - 12} ${hy - 13} Q${hx} ${hy - 18} ${hx + 10} ${hy - 9}" ${thin(1.5)}/>`;
+            return s;
+        }
+
+        function umbrellaHand(w) {
+            const hx = 200, hy = 412;
+            let s = `<path d="M200 104 V${hy}" stroke-width="3"/>`;
+            s += `<path d="M200 ${hy + 10} V${hy + 30} Q200 ${hy + 42} 190 ${hy + 42} Q180 ${hy + 42} 180 ${hy + 32}" stroke-width="3.5"/>`;
+            s += forearm(w, hx, hy);
+            return s;
+        }
+
+        function umbrellaCanopy() {
+            const ribs = [36, 118, 200, 282, 364];
+            let edge = `M36 186`;
+            for (let i = 1; i < ribs.length; i++) edge += ` Q${(ribs[i - 1] + ribs[i]) / 2} 170 ${ribs[i]} 186`;
+            const top = 'Q352 112 200 102 Q48 112 36 186 Z';
+            let s = `<path d="${edge} ${top}" ${W} stroke-width="3"/>`;
+            s += `<path d="M200 102 Q140 116 118 186 M200 102 V186 M200 102 Q260 116 282 186" ${thin(2)}/>`;
+            s += `<path d="M200 102 V88" stroke-width="3.5"/>`;
+            return s;
+        }
+
+        // ---------- Easter egg drawings ----------
+
+        function eggArt(egg, w) {
+            switch (egg) {
+                case 'owl':
+                    return `<g transform="translate(200 58)">`
+                        + `<path d="M-12 18 Q-15 -2 -10 -10 L-11 -19 L-4 -13 Q0 -14 4 -13 L11 -19 L10 -10 Q15 -2 12 18 Z" ${W} stroke-width="2.2"/>`
+                        + `<circle cx="-5" cy="-5" r="4.5" ${W} stroke-width="1.6"/><circle cx="5" cy="-5" r="4.5" ${W} stroke-width="1.6"/>`
+                        + `<circle cx="-5" cy="-5" r="1.8" ${BLK}/><circle cx="5" cy="-5" r="1.8" ${BLK}/>`
+                        + `<path d="M-2 1 L0 5 L2 1 Z" ${BLK} stroke-width="1"/>`
+                        + `<path d="M-6 9 q2 2 4 0 M2 9 q2 2 4 0 M-4 14 q2 2 4 0 M-6 18 V22 M6 18 V22" ${thin(1.2)}/></g>`;
+                case 'shootingStar':
+                    return halo(`<path d="M372 24 L282 70" stroke-dasharray="10 5" stroke-width="2"/>`, 5)
+                        + `<path d="M280 62 L282 68 L288 70 L282 72 L280 78 L278 72 L272 70 L278 68 Z" fill="#fff" stroke="#fff" stroke-width="1.5"/>`;
+                case 'ufo':
+                    return `<g transform="translate(46 120)">`
+                        + `<path d="M-14 6 L-34 76 M14 6 L34 76" stroke="#fff" stroke-width="2" stroke-dasharray="4 4"/>`
+                        + `<ellipse cx="0" cy="0" rx="28" ry="8" ${W} stroke-width="2"/>`
+                        + `<path d="M-14 -3 Q-12 -18 0 -18 Q12 -18 14 -3" ${W} stroke-width="2"/>`
+                        + `<circle cx="-14" cy="1" r="1.8" ${BLK}/><circle cx="0" cy="3" r="1.8" ${BLK}/><circle cx="14" cy="1" r="1.8" ${BLK}/></g>`;
+                case 'airplane':
+                    return halo(`<path d="M140 30 H282" stroke-dasharray="6 6" stroke-width="2"/>`, 5)
+                        + `<g transform="translate(300 30)">`
+                        + `<path d="M-16 -2 H12 Q20 -2 22 1 Q20 4 12 4 H-14 L-20 -8 H-16 Z" ${W} stroke-width="2"/>`
+                        + `<path d="M0 0 L-8 12 H-3 L8 1 M-2 -1 L-6 -8 H-2 L4 -1" ${W} stroke-width="1.8"/>`
+                        + `<path d="M6 0 H10 M12 0 h1" ${thin(1.2)}/></g>`;
+                case 'balloon':
+                    return `<g transform="translate(320 70)">`
+                        + `<path d="M0 -34 Q26 -34 26 -8 Q26 12 6 26 H-6 Q-26 12 -26 -8 Q-26 -34 0 -34 Z" ${W} stroke-width="2.2"/>`
+                        + `<path d="M0 -34 Q-12 -8 -5 26 M0 -34 Q12 -8 5 26 M0 -34 V26" ${thin(1.2)}/>`
+                        + `<path d="M-6 26 L-5 36 M6 26 L5 36" ${thin(1.2)}/><rect x="-6" y="36" width="12" height="9" ${W} stroke-width="1.8"/></g>`;
+                case 'geese': {
+                    const bird = (x, y) => `M${x - 6} ${y - 2} Q${x - 3} ${y - 5} ${x} ${y} Q${x + 3} ${y - 5} ${x + 6} ${y - 2}`;
+                    const pts = [[300, 100], [288, 92], [276, 84], [312, 92], [324, 84], [336, 76], [264, 76]];
+                    return halo(`<path d="${pts.map(p => bird(...p)).join(' ')}" stroke-width="2"/>`, 5);
+                }
+                case 'kite':
+                    return `<path d="M318 82 Q360 160 400 210" ${thin(1)}/>`
+                        + `<path d="M318 46 L334 64 L318 90 L302 64 Z" ${W} stroke-width="2.2"/><path d="M318 46 V90 M302 64 H334" ${thin(1.2)}/>`
+                        + `<path d="M318 90 Q308 104 316 116 Q324 128 314 140" ${thin(1.3)}/>`
+                        + [[311, 103], [318, 120], [316, 136]].map(([x, y]) => `<path d="M${x - 4} ${y - 3} L${x + 4} ${y + 3} M${x + 4} ${y - 3} L${x - 4} ${y + 3}" stroke-width="2"/>`).join('');
+                case 'rainbow':
+                    return halo([150, 140, 130].map(rad => `<path d="M${200 - rad} 190 A${rad} ${rad} 0 0 1 ${200 + rad} 190"/>`).join(''), 5);
+                case 'snowman':
+                    return `<g transform="translate(174 ${HORIZON})"><circle cx="0" cy="-12" r="12" ${W}/><circle cx="0" cy="-30" r="8" ${W}/>`
+                        + `<circle cx="-3" cy="-32" r="1.2" ${BLK}/><circle cx="3" cy="-32" r="1.2" ${BLK}/><path d="M0 -29 l6 1 l-6 1" ${thin(1.3)}/>`
+                        + `<path d="M-7 -37 H7 M-4 -37 V-44 H4 V-37" ${W} stroke-width="2"/><path d="M-8 -20 L-18 -26 M8 -20 L18 -26" ${thin(1.6)}/></g>`;
+                case 'catInWindow':
+                    return `<path d="M191 154 V140 Q191 132 196 130 L194 120 L200 126 L206 120 L204 130 Q209 132 209 140 V154 Z" ${BLK} stroke="none"/>`
+                        + `<circle cx="197" cy="134" r="1.2" fill="#fff"/><circle cx="203" cy="134" r="1.2" fill="#fff"/>`;
+                case 'bigfoot': {
+                    const r = rng(7);
+                    const body = spline([[368, 214], [380, 210], [392, 222], [396, 268], [372, 268], [370, 236]], true, 4);
+                    return `<path d="${fuzz(body, 2, r)}" ${BLK} stroke-width="1.5"/>`
+                        + `<circle cx="377" cy="223" r="1.6" fill="#fff"/><circle cx="385" cy="223" r="1.6" fill="#fff"/>`
+                        + `<path d="M356 ${HORIZON} V226" stroke-width="3"/>`;
+                }
+                case 'deer': {
+                    // Buck standing in front of the right-hand tree, facing left (haloed so it reads at night)
+                    const deer = `<path d="M-14 -29 L-16 -14 L-15 0 M-7 -28 L-7 -14 L-6 0 M18 -29 L23 -15 L20 0 M25 -30 L30 -15 L27 0" stroke-width="2.4"/>`
+                        + `<path d="M-19 -1 h-3 M-8 -1 h-3 M18 -1 h-3 M25 -1 h-3" stroke-width="2.4"/>`
+                        + `<path d="M33 -42 Q39 -46 38 -38 Q36 -36 33 -38 Z" ${W} stroke-width="1.8"/>`
+                        + `<path d="M-40 -66 Q-41 -70 -37 -72 L-28 -78 Q-24 -80 -20 -78 Q-16 -74 -14 -66 Q-10 -54 -2 -48 Q10 -46 22 -47 Q32 -48 33 -40 Q34 -30 26 -27 L22 -27 Q6 -24 -10 -27 Q-18 -28 -20 -36 Q-22 -46 -26 -56 Q-30 -64 -34 -64 L-38 -63 Q-41 -63 -40 -66 Z" ${W} stroke-width="2.2"/>`
+                        + `<path d="M-19 -77 Q-12 -84 -7 -82 Q-11 -76 -17 -74 Z" ${W} stroke-width="1.8"/>`
+                        + `<path d="M-23 -79 Q-27 -91 -21 -99 Q-17 -103 -11 -101 M-24 -89 L-31 -94 M-21 -96 L-24 -104 M-19 -80 Q-14 -90 -8 -93 Q-4 -95 -2 -91 M-12 -89 L-13 -97" stroke-width="2"/>`
+                        + `<circle cx="-28" cy="-72" r="1.3" ${BLK}/><circle cx="-39" cy="-67" r="1.6" ${BLK}/>`
+                        + `<path d="M-14 -40 Q-10 -36 -4 -36" ${thin(1)}/>`;
+                    return `<g transform="translate(364 ${HORIZON}) scale(.8)">${halo(deer, 6)}</g>`;
+                }
+                case 'rabbit':
+                    // Sitting bunny by the door
+                    return `<g transform="translate(228 ${HORIZON}) scale(1.4)">`
+                        + `<path d="M-8 0 Q-12 -10 -4 -15 Q4 -18 8 -10 Q10 -4 8 0 Z" ${W} stroke-width="2"/>`
+                        + `<circle cx="-7" cy="-17" r="5.5" ${W} stroke-width="2"/>`
+                        + `<path d="M-9 -21 Q-13 -32 -10 -34 Q-7 -32 -7 -22 M-5 -22 Q-4 -33 -1 -33 Q1 -30 -3 -21" ${W} stroke-width="1.8"/>`
+                        + `<circle cx="-9" cy="-18" r="1" ${BLK}/><circle cx="10" cy="-4" r="2.6" ${W} stroke-width="1.6"/></g>`;
+                case 'blackhawks': {
+                    // Three UH-60s in echelon, flying left: long low cabin, engine hump, tail fin, stabilator
+                    const heli = (x, y) => {
+                        const body = `<path d="M0 2 Q0 -6 8 -9 L20 -12 L30 -12 L34 -18 L52 -18 L56 -12 L60 -10 L96 -7 L100 -17 L106 -17 L104 -4 L96 0 L60 4 Q40 10 10 9 Q0 8 0 2 Z"/>`;
+                        const gear = `<path d="M-14 -23 H94 M43 -18 V-23 M103 -21 V-1 M92 -2 H108 M14 9 V14 M44 8 V14 M90 2 V8"/><circle cx="14" cy="15" r="2.5"/><circle cx="44" cy="15" r="2.5"/><circle cx="90" cy="9" r="1.8"/>`;
+                        return `<g transform="translate(${x} ${y}) scale(.55)">`
+                            + `<g stroke="#fff" stroke-width="9" fill="#fff">${body}${gear}</g>`
+                            + `<g fill="#000" stroke-width="2">${body}</g>`
+                            + `<g stroke-width="2.6" fill="#000">${gear}</g>`
+                            + `<path d="M5 -3 L11 -8 L21 -9 L21 -3 Z M27 -9 H37 V-3 H27 Z" fill="#fff" stroke="none"/></g>`;
+                    };
+                    return heli(150, 30) + heli(220, 52) + heli(290, 74);
+                }
+                default:
+                    return '';
+            }
+        }
+
+        function fireworks() {
+            const burst = (cx, cy, rad) => Array.from({ length: 10 }, (_, i) => {
+                const a = i * Math.PI / 5, c = Math.cos(a), s = Math.sin(a);
+                return `M${f(cx + rad * .35 * c)} ${f(cy + rad * .35 * s)} L${f(cx + rad * c)} ${f(cy + rad * s)}`;
+            }).join(' ');
+            return `<path d="${burst(150, 40, 22)} ${burst(320, 90, 18)} ${burst(250, 26, 14)}" stroke="#fff" stroke-width="2"/>`;
+        }
+
+        // ---------- Compose ----------
+
+        function drawScene(w, egg, now) {
+            const r = rng(42);
+            const season = seasonal(now);
+            const canopyDy = season.party ? -24 : 0; // lift the umbrella to clear party hats
+            let s = '';
+
+            if (w.night) s += `<rect x="0" y="0" width="400" height="${HORIZON}" ${BLK} stroke="none"/>`;
+            if (egg === 'rainbow') s += eggArt(egg, w);
+
+            // Sky
+            if (w.night) {
+                if (w.sky !== 'overcast' && w.sky !== 'cloudy') s += stars(rng(7));
+                if (w.sky !== 'overcast') s += moon(62, 58, now, w);
+                if (season.fireworks) s += fireworks();
+            } else if (w.sunVisible) {
+                s += sun(62, 58);
+            }
+            if (['airplane', 'balloon', 'geese', 'kite', 'shootingStar', 'ufo'].includes(egg)) s += eggArt(egg, w);
+            s += clouds(w);
+            if (egg === 'blackhawks') s += eggArt(egg, w);
+            if (w.thunder && w.rain) s += bolt;
+            if (w.windy) s += windLines();
+
+            // Farm
+            s += farm(w, r, season);
+            if (['owl', 'catInWindow', 'snowman', 'bigfoot', 'deer', 'rabbit'].includes(egg)) s += eggArt(egg, w);
+            if (w.fog) s += fogLines();
+
+            // Precip (behind us, kept out from under the umbrella)
+            if (w.rain) {
+                s += `<defs><mask id="dry"><rect width="400" height="480" fill="#fff"/><path d="M36 ${182 + canopyDy} H364 V480 H36 Z" fill="#000"/></mask></defs>`;
+                s += `<g mask="${w.umbrella ? 'url(#dry)' : ''}">${rainLines(rng(11))}</g>`;
+            }
+            if (w.snow) s += snowflakes(rng(13));
+
+            // Us
+            s += her(w, rng(5), season);
+            s += `<g transform="translate(0 ${HIM_DY})">${him(w, rng(9), egg, season)}</g>`;
+            if (w.umbrella) s += `<g transform="translate(0 ${canopyDy})">${umbrellaCanopy()}</g>`;
+
+            // Frame
+            s += `<rect x="1.5" y="1.5" width="397" height="477" stroke-width="3"/>`;
+
+            const dress = { tank: 'tank tops', tee: 't-shirts', long: 'long sleeves', coat: 'coats and hats' }[w.tier];
+            const label = `The two of us in ${dress}${w.umbrella ? ' under an umbrella' : ''}${w.sunglasses ? ' and sunglasses' : ''}, ${w.night ? 'at night' : 'by day'}`;
+            return `<svg viewBox="0 0 400 480" width="400" height="480" role="img" aria-label="${label}" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${s}</svg>`;
+        }
+
+        // ---------- Right panel: numbers ----------
+
+        // Highlight thresholds (deg F, %, mph)
+        const LOOKAHEAD_DAYS = 6;
+        const SWING_F = 15;        // day-to-day change in highs
+        const FREEZE_F = 32;
+        const HARD_FREEZE_F = 28;
+        const HEAT_F = 100;
+        const HEAT_INDEX_F = 108;
+        const RAIN_POP = 40;
+        const STORM_POP = 30;
+        const SNOW_POP = 30;
+        const WIND_HL_MPH = 25;    // sustained
+        const GUST_HL_MPH = 35;
+        const HEAVY_RAIN_IN = 1;   // liquid inches in one period
+        // Official NWS alerts by severity (they outrank the rules below)
+        const ALERT_SCORE = { Extreme: 130, Severe: 115, Moderate: 85, Minor: 60 };
+
+        const deg = (n) => isFinite(n) ? Math.round(n) + '\u00B0' : '--\u00B0';
+        const getPeriods = (forecast) => forecast?.periods || forecast?.properties?.periods || [];
+
+        // Whole local days between now and date (0 = today)
+        function dayOffset(date, now) {
+            const a = localParts(date), b = localParts(now);
+            return Math.round((Date.UTC(a.year, a.month - 1, a.day) - Date.UTC(b.year, b.month - 1, b.day)) / 864e5);
+        }
+
+        // "today", "tonight", "tomorrow", "tomorrow night", "Saturday", "Saturday night"
+        function whenName(p, now) {
+            const start = new Date(p.startTime), off = dayOffset(start, now), night = p.isDaytime === false;
+            if (off <= 0) return night ? 'tonight' : 'today';
+            if (off === 1) return night ? 'tomorrow night' : 'tomorrow';
+            const dow = start.toLocaleDateString('en-US', { weekday: 'long', timeZone: TZ });
+            return night ? `${dow} night` : dow;
+        }
+
+        // NWS puts amounts in the detailed text, e.g. "New rainfall amounts between a tenth and quarter of an inch possible."
+        function precipAmount(detail) {
+            const words = { 'a tenth': 0.1, tenth: 0.1, 'a quarter': 0.25, quarter: 0.25, 'a half': 0.5, half: 0.5, 'three quarters': 0.75, one: 1, an: 1, a: 1 };
+            const num = (s) => { s = s.trim(); return s in words ? words[s] : parseFloat(s); };
+            const sentences = String(detail || '').toLowerCase().split('.');
+            for (const sent of sentences) {
+                const kind = /rainfall/.test(sent) ? 'Rain' : /snow/.test(sent) ? 'Snow' : /ice accum/.test(sent) ? 'Ice' : null;
+                if (!kind) continue;
+                let m, text = null;
+                if ((m = sent.match(/less than (.+?) (?:of an )?inch/))) text = `&lt; ${num(m[1])}`;
+                else if ((m = sent.match(/between (.+?) and (.+?) (?:of an )?inch/))) text = `${num(m[1])}\u2013${num(m[2])}`;
+                else if ((m = sent.match(/(\d+(?:\.\d+)?) to (\d+(?:\.\d+)?) inch/))) text = `${m[1]}\u2013${m[2]}`;
+                else if ((m = sent.match(/(?:around|up to|near) (.+?) (?:of an )?inch/))) text = `~${num(m[1])}`;
+                if (text && !/NaN/.test(text)) return { kind, text: `${text} in` };
+            }
+            return null;
+        }
+
+        // 0.72 -> "0.72", 0.5 -> "0.5", 1.26 -> "1.3"
+        const inches = (n) => n >= 1 ? n.toFixed(1) : n.toFixed(2).replace(/(\.\d)0$/, '$1');
+
+        // Exact amounts from the API's per-period `precipitation` (grid QPF, inches).
+        // undefined = field missing (fall back to text); null = nothing measurable.
+        function gridAmount(p) {
+            const q = p.precipitation;
+            if (!q || typeof q !== 'object') return undefined;
+            const snow = +q.snowIn || 0, ice = +q.iceIn || 0, liquid = +q.liquidIn || 0;
+            if (snow >= 0.1) return { kind: 'Snow', in: snow, text: `${inches(snow)} in` };
+            if (ice >= 0.01) return { kind: 'Ice', in: ice, text: `${inches(ice)} in` };
+            if (liquid >= 0.01) return { kind: 'Rain', in: liquid, text: `${inches(liquid)} in` };
+            return null;
+        }
+
+        function periodInfo(p) {
+            const short = String(p.shortForecast || '').toLowerCase();
+            const detail = String(p.detailedForecast || '').toLowerCase();
+            const grid = gridAmount(p);
+            let temp = asNumber(p.temperature);
+            if (String(p.temperatureUnit || 'F').toUpperCase().startsWith('C')) temp = temp * 9 / 5 + 32;
+            const speeds = (String(p.windSpeed || '').match(/\d+/g) || []).map(Number);
+            return {
+                p, temp: Math.round(temp),
+                pop: probPct(p.probabilityOfPrecipitation?.value) ?? 0,
+                wind: Math.max(0, ...speeds),
+                gust: +(detail.match(/gusts? (?:as high as|up to|to|around|near) (\d+) mph/) || [])[1] || 0,
+                thunder: /thunder|t-storm|tstorm/.test(short),
+                severe: /severe/.test(short + ' ' + detail),
+                snow: /snow|flurr|blizzard/.test(short) || grid?.kind === 'Snow',
+                ice: /sleet|freezing rain|freezing drizzle|\bice\b/.test(short) || grid?.kind === 'Ice',
+                rain: /rain|shower|drizzle/.test(short),
+                // Fog: 3 = dense, 2 = areas/widespread/plain fog, 1 = patchy
+                fog: !/fog/.test(short + ' ' + detail) ? 0
+                    : /dense fog/.test(short + ' ' + detail) ? 3
+                    : /patchy fog/.test(short + ' ' + detail) && !/(areas of|widespread) fog/.test(short + ' ' + detail) ? 1 : 2,
+                fogWhen: (detail.match(/fog (before|after|until|between) (\d{1,2}\s?(?:am|pm)(?: and \d{1,2}\s?(?:am|pm))?)/) || []).slice(1).join(' '),
+                heatIndex: +(detail.match(/heat index values? (?:as high as|up to|near|around) (\d+)/) || [])[1] || 0,
+                amount: grid !== undefined ? grid : precipAmount(detail)
+            };
+        }
+
+        // Sunrise/sunset from lat/lon (NOAA sunrise equation, ~1 minute accuracy)
+        function sunTimes(lat, lon, now) {
+            if (!isFinite(lat) || !isFinite(lon)) return null;
+            const { year, month, day } = localParts(now), rad = Math.PI / 180;
+            const n = Date.UTC(year, month - 1, day, 12) / 864e5 + 2440587.5 - 2451545;
+            const Js = n - lon / 360;
+            const M = (357.5291 + 0.98560028 * Js) % 360;
+            const C = 1.9148 * Math.sin(M * rad) + 0.02 * Math.sin(2 * M * rad) + 0.0003 * Math.sin(3 * M * rad);
+            const L = (M + C + 180 + 102.9372) % 360;
+            const Jt = 2451545 + Js + 0.0053 * Math.sin(M * rad) - 0.0069 * Math.sin(2 * L * rad);
+            const dec = Math.asin(Math.sin(L * rad) * Math.sin(23.4397 * rad));
+            const cosH = (Math.sin(-0.833 * rad) - Math.sin(lat * rad) * Math.sin(dec)) / (Math.cos(lat * rad) * Math.cos(dec));
+            if (cosH < -1 || cosH > 1) return null;
+            const H = Math.acos(cosH) / rad / 360;
+            const toDate = (J) => new Date((J - 2440587.5) * 864e5);
+            return { rise: toDate(Jt - H), set: toDate(Jt + H) };
+        }
+
+        const clock = (d) => {
+            const [t, ap] = d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).split(/\s+/);
+            return `${t}<small>${ap}</small>`;
+        };
+
+        // ---------- Right panel: icons ----------
+
+        const ICONS = {
+            thermo: `<svg viewBox="0 0 48 52"><path d="M19 34 V10 a5 5 0 0 1 10 0 V34"/><circle cx="24" cy="40" r="9"/><circle cx="24" cy="40" r="5" fill="#000" stroke="none"/><path d="M24 36 V18" stroke-width="4"/><path d="M33 14 h6 M33 22 h6 M33 30 h6" stroke-width="2"/></svg>`,
+            drop: (pop) => {
+                const top = 47 - 40 * Math.min(100, pop) / 100;
+                const d = 'M24 5 C24 5 9 23 9 32 a15 15 0 0 0 30 0 C39 23 24 5 24 5 Z';
+                return `<svg viewBox="0 0 48 52"><defs><clipPath id="popFill"><rect x="0" y="${f(top)}" width="48" height="52"/></clipPath></defs>`
+                    + `<path d="${d}" fill="#000" stroke="none" clip-path="url(#popFill)"/><path d="${d}"/></svg>`;
+            },
+            sun: (up) => `<svg viewBox="0 0 40 40"><path d="M3 31 H37"/><path d="M12 31 a8 8 0 0 1 16 0"/>`
+                + `<path d="M5 25 l3 1.5 M35 25 l-3 1.5 M10 17 l2.5 2.5 M30 17 l-2.5 2.5" stroke-width="2.5"/>`
+                + (up ? `<path d="M20 20 V5 M15 10 l5 -5 l5 5" stroke-width="2.5"/>` : `<path d="M20 5 V20 M15 15 l5 5 l5 -5" stroke-width="2.5"/>`)
+                + `<path d="M9 36 H31" stroke-width="2"/></svg>`
+        };
+
+        const HL_ICONS = {
+            storm: `<path d="M8 20 a6 6 0 0 1 1 -12 a8 8 0 0 1 15 2 a5 5 0 0 1 0 10 Z"/><path d="M16 17 L12 25 H17 L14 31 L21 22 H16 L19 17 Z" fill="#000" stroke-width="1.5"/>`,
+            rain: `<path d="M16 3 C16 3 6 15 6 21 a10 10 0 0 0 20 0 C26 15 16 3 16 3 Z"/>`,
+            snow: `<path d="M16 3 V29 M4.7 9.5 L27.3 22.5 M4.7 22.5 L27.3 9.5 M12 5 l4 3 l4 -3 M12 27 l4 -3 l4 3"/>`,
+            freeze: `<path d="M11 20 V6 a3.5 3.5 0 0 1 7 0 V20"/><circle cx="14.5" cy="24" r="5.5" fill="#000"/><path d="M24 4 V14 M19.7 6.5 L28.3 11.5 M19.7 11.5 L28.3 6.5" stroke-width="2"/>`,
+            cool: `<path d="M9 20 V6 a3.5 3.5 0 0 1 7 0 V20"/><circle cx="12.5" cy="24" r="5.5" fill="#000"/><path d="M25 5 V26 M20 21 l5 5 l5 -5"/>`,
+            warm: `<path d="M9 20 V6 a3.5 3.5 0 0 1 7 0 V20"/><circle cx="12.5" cy="24" r="5.5" fill="#000"/><path d="M25 26 V5 M20 10 l5 -5 l5 5"/>`,
+            heat: `<circle cx="16" cy="16" r="6"/><path d="M16 2 V6 M16 26 V30 M2 16 H6 M26 16 H30 M6 6 l3 3 M23 23 l3 3 M26 6 l-3 3 M9 23 l-3 3"/>`,
+            wind: `<path d="M3 11 H20 a4 4 0 1 0 -4 -4 M3 18 H25 a4 4 0 1 1 -4 4 M3 25 H14"/>`,
+            fog: `<path d="M9 13 a5 5 0 0 1 1 -9 a7 7 0 0 1 13 2 a4 4 0 0 1 0 7"/><path d="M3 18 H24 M8 23 H29 M3 28 H20" stroke-width="2.5"/>`,
+            calm: `<path d="M4 16 a12 12 0 0 1 24 0"/><path d="M2 22 H30 M7 27 H25"/>`,
+            alert: `<path d="M16 2.5 L30.5 28.5 H1.5 Z" fill="#000" stroke-linejoin="round"/><path d="M16 11 V19.5" stroke="#fff" stroke-width="3.2"/><circle cx="16" cy="24" r="2" fill="#fff" stroke="none"/>`
+        };
+        const hlIcon = (k) => `<svg viewBox="0 0 32 32" aria-hidden="true">${HL_ICONS[k] || ''}</svg>`;
+
+        // ---------- Highlights (alerts + rules) ----------
+        // Each rule adds at most one candidate. Score = importance minus 4 per day out; top 3 shown in time order.
+
+        // "7pm", "tomorrow 9am", "Sat 6pm"
+        function alertTime(d, now, sameDayAs) {
+            const t = d.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' }).replace(':00', '').replace(/\s+/g, '').toLowerCase();
+            if (sameDayAs && dayOffset(d, sameDayAs) === 0) return t;
+            const off = dayOffset(d, now);
+            if (off <= 0) return t;
+            if (off === 1) return `tomorrow ${t}`;
+            return `${d.toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ })} ${t}`;
+        }
+
+        // Alert event -> highlight kind, so a rule saying the same thing can step aside
+        const alertKind = (ev) => /tornado|thunderstorm/i.test(ev) ? 'storm'
+            : /fog/i.test(ev) ? 'fog'
+            : /freez|frost|cold|chill/i.test(ev) ? 'freeze'
+            : /heat/i.test(ev) ? 'heat'
+            : /winter|snow|ice|blizzard|sleet/i.test(ev) ? 'snow'
+            : /wind|gale/i.test(ev) ? 'wind' : 'other';
+
+        // NWS active alerts from the API (`alerts`: array, [] = none, null = unknown).
+        // Text is filled in by alertText() once the rules have run.
+        function alertItems(alerts, now) {
+            const out = [], seen = new Set();
+            const list = (Array.isArray(alerts) ? alerts : [])
+                .map(a => ({ a, on: new Date(a?.onset || now), end: a?.ends ? new Date(a.ends) : null }))
+                .filter(x => x.a?.event && !isNaN(x.on) && !(x.end && (isNaN(x.end) || x.end <= now)))
+                .sort((x, y) => x.on - y.on);
+            for (const { a, on, end } of list) {
+                const ev = String(a.event).trim();
+                if (seen.has(ev)) continue;
+                seen.add(ev);
+                const score = (ALERT_SCORE[a.severity] ?? 50) - 4 * Math.max(0, dayOffset(on, now));
+                out.push({ t: Math.max(+on, +now), icon: 'alert', ev, score, kind: alertKind(ev), on, end, from: +on, to: end ? +end : Infinity, tail: '' });
+            }
+            return out;
+        }
+
+        // Active: "Flood Watch until tomorrow 6pm". Upcoming: "Freeze Warning Sunday night" (or exact times
+        // past the forecast). Tail = numbers borrowed from the rule it replaced, e.g. ", low of 29 deg".
+        function alertText(x, up, now) {
+            if (x.on <= now) return x.end ? `${x.ev} until ${alertTime(x.end, now)}${x.tail}` : `${x.ev} in effect${x.tail}`;
+            const p = up.find(y => new Date(y.p.startTime) <= x.on && x.on < new Date(y.p.endTime));
+            if (p) return `${x.ev} ${whenName(p.p, now)}${x.tail}`;
+            return `${x.ev} from ${alertTime(x.on, now)}${x.end ? ` to ${alertTime(x.end, now, x.on)}` : ''}`;
+        }
+
+        function highlights(periods, now, alerts) {
+            const up = periods
+                .filter(p => new Date(p.endTime) > now && dayOffset(new Date(p.startTime), now) <= LOOKAHEAD_DAYS)
+                .map(periodInfo);
+            const official = alertItems(alerts, now);
+            const items = [];
+            const when = (i) => whenName(up[i].p, now);
+            const add = (i, score, icon, text) => {
+                const s = +new Date(up[i].p.startTime), e = +new Date(up[i].p.endTime);
+                const kind = icon === 'cool' || icon === 'warm' ? 'temp' : icon;
+                // An official alert of the same kind covering this period says it better; give it our numbers
+                const a = official.find(a => a.kind === kind && a.from < e && a.to > s);
+                if (a) { if (!a.tail) a.tail = text.match(/(?: \(\d+%\))?(?:, [^,]+)?$/)[0]; return; }
+                items.push({ t: Math.max(s, +now), icon, text, score: score - 4 * Math.max(0, dayOffset(new Date(s), now)) });
+            };
+            // Most significant matching period: value minus 3 per day out (so nearer wins close calls)
+            const find = (fn, val = (x) => x.pop) => {
+                let best = -1, bestV = -Infinity;
+                up.forEach((x, k) => {
+                    if (!fn(x)) return;
+                    const v = val(x) - 3 * Math.max(0, dayOffset(new Date(x.p.startTime), now));
+                    if (v > bestV) { best = k; bestV = v; }
+                });
+                return best;
+            };
+
+            // ", 0.72 in" when a rain amount is known and worth mentioning
+            const rainAmt = (x) => x.amount?.kind === 'Rain' && !(x.amount.in < 0.1) ? `, ${x.amount.text}` : '';
+
+            // Storms (severe outranks every rule)
+            let i = find(x => x.severe && (x.thunder || x.pop >= STORM_POP));
+            if (i >= 0) add(i, 100, 'storm', `Severe storms possible ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`);
+            else if ((i = find(x => x.thunder && x.pop >= STORM_POP)) >= 0) {
+                add(i, 80, 'storm', `Storms ${up[i].pop >= 60 ? 'likely' : 'possible'} ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`);
+            }
+
+            // Snow / ice
+            if ((i = find(x => (x.snow || x.ice) && x.pop >= SNOW_POP)) >= 0) {
+                const x = up[i], amt = x.amount && x.amount.kind !== 'Rain' ? `, ${x.amount.text}` : '';
+                add(i, 95, 'snow', `${x.ice ? 'Icy mix' : 'Snow'} possible ${when(i)} (${x.pop}%)${amt}`);
+            }
+
+            // Rain (storm periods are covered above)
+            if ((i = find(x => x.rain && !x.thunder && x.pop >= RAIN_POP)) >= 0) {
+                const x = up[i], heavy = x.amount?.kind === 'Rain' && x.amount.in >= HEAVY_RAIN_IN;
+                add(i, heavy ? 85 : 65, 'rain', `${heavy ? 'Heavy rain' : `Rain ${x.pop >= 60 ? 'likely' : 'expected'}`} ${when(i)} (${x.pop}%)${rainAmt(x)}`);
+            }
+
+            // Freeze: first freezing night, and how cold it gets
+            const freezes = up.map((x, k) => k).filter(k => up[k].p.isDaytime === false && up[k].temp <= FREEZE_F);
+            if (freezes.length) {
+                const k = freezes[0], lo = Math.min(...freezes.map(j => up[j].temp)), hard = lo <= HARD_FREEZE_F;
+                add(k, 90, 'freeze', freezes.length > 1
+                    ? `${hard ? 'Hard freeze' : 'Freezing'} nights start ${when(k)}, lows to ${lo}\u00B0`
+                    : `${hard ? 'Hard freeze' : 'Freeze'} ${when(k)}, low of ${lo}\u00B0`);
+            }
+
+            // Temperature swings between consecutive daytime highs
+            const days = up.map((x, k) => k).filter(k => up[k].p.isDaytime !== false);
+            let swing = null;
+            for (let j = 1; j < days.length; j++) {
+                const d = up[days[j]].temp - up[days[j - 1]].temp;
+                if (Math.abs(d) >= SWING_F && (!swing || Math.abs(d) > Math.abs(swing.d))) swing = { d, a: up[days[j - 1]].temp, b: up[days[j]].temp, k: days[j] };
+            }
+            if (swing) {
+                add(swing.k, swing.d < 0 ? 75 : 55, swing.d < 0 ? 'cool' : 'warm',
+                    `Big temperature ${swing.d < 0 ? 'drop' : 'jump'} ${when(swing.k)}, ${swing.a}\u00B0 \u2192 ${swing.b}\u00B0`);
+            }
+
+            // Wind
+            if ((i = find(x => x.wind >= WIND_HL_MPH || x.gust >= GUST_HL_MPH, x => Math.max(x.wind, x.gust))) >= 0) {
+                const x = up[i], strong = x.wind >= 40 || x.gust >= 58;
+                add(i, strong ? 92 : 70, 'wind', `${strong ? 'High winds' : 'Windy'} ${when(i)}, ${x.gust ? `gusts to ${x.gust} mph` : `winds to ${x.wind} mph`}`);
+            }
+
+            // Fog (patchy fog is common, so it ranks low unless the week is otherwise quiet)
+            if ((i = find(x => x.fog > 0, x => x.fog * 30)) >= 0) {
+                const x = up[i], label = ['', 'Patchy fog', 'Fog', 'Dense fog'][x.fog];
+                let text = `${label} ${when(i)}${x.fogWhen ? ' ' + x.fogWhen : ''}`;
+                if (x.p.isDaytime === false && /am/.test(x.fogWhen) && !/pm/.test(x.fogWhen)) {
+                    // Overnight fog "after 3am" belongs to the next morning
+                    const next = new Date(new Date(x.p.startTime).getTime() + 864e5), off = dayOffset(next, now);
+                    const day = off <= 0 ? 'today' : off === 1 ? 'tomorrow' : next.toLocaleDateString('en-US', { weekday: 'long', timeZone: TZ });
+                    text = `${label} early ${day} (${x.fogWhen})`;
+                }
+                add(i, [0, 40, 55, 72][x.fog], 'fog', text);
+            }
+
+            // Heat
+            if ((i = find(x => x.p.isDaytime !== false && (x.temp >= HEAT_F || x.heatIndex >= HEAT_INDEX_F), x => Math.max(x.temp, x.heatIndex))) >= 0) {
+                const x = up[i];
+                add(i, 50, 'heat', x.heatIndex >= HEAT_INDEX_F ? `Heat index up to ${x.heatIndex}\u00B0 ${when(i)}` : `Hot ${when(i)}, high of ${x.temp}\u00B0`);
+            }
+
+            official.forEach(x => items.push({ ...x, text: alertText(x, up, now) }));
+            if (!items.length && !up.length) return [];
+            if (!items.length) {
+                // Nothing notable: say so, with the range of highs
+                const highs = days.map(k => up[k].temp), last = whenName(up[up.length - 1].p, now).replace(/ night$/, '');
+                const dry = up.every(x => x.pop < 30);
+                return [{ icon: 'calm', text: `${dry ? 'Dry and quiet' : 'Nothing major'} through ${last}${highs.length ? `, highs ${Math.min(...highs)}\u2013${Math.max(...highs)}\u00B0` : ''}` }];
+            }
+            return items.sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.t - b.t || b.score - a.score);
+        }
+
+        // ---------- Right panel: render ----------
+
+        function renderPanel(period, w, periods, now, current, location, alerts) {
+            const up = periods.filter(p => new Date(p.endTime) > now);
+            const hiP = up.find(p => p.isDaytime !== false), loP = up.find(p => p.isDaytime === false);
+            const hi = hiP ? periodInfo(hiP).temp : (w.night ? NaN : w.temp);
+            const lo = loP ? periodInfo(loP).temp : (w.night ? w.temp : NaN);
+            const info = periodInfo(period);
+
+            const hiCap = hiP ? `High ${whenName(hiP, now)}` : 'High';
+            const loCap = loP ? `Low ${whenName(loP, now)}` : 'Low';
+            const amount = info.amount
+                ? `<div class="v"><span class="amt">${info.amount.text}</span><span class="cap">${info.amount.kind}</span></div>`
+                : info.pop < 20 ? `<div class="v"><span class="amt">Dry</span><span class="cap">&nbsp;</span></div>` : '';
+
+            const sun = sunTimes(asNumber(location?.latitude ?? location?.lat), asNumber(location?.longitude ?? location?.lon ?? location?.lng), now);
+            const sunRow = sun ? `<div class="stat sun">
+                    <span class="ico">${ICONS.sun(true)}</span><div class="v"><span class="sunv">${clock(sun.rise)}</span><span class="cap">Sunrise</span></div>
+                    <span class="ico" style="margin-left:14px">${ICONS.sun(false)}</span><div class="v"><span class="sunv">${clock(sun.set)}</span><span class="cap">Sunset</span></div>
+                </div>` : '';
+
+            let hl = [];
+            try { hl = highlights(periods, now, alerts); } catch (e) { hl = []; }
+
+            const ts = current?.timestamp ? new Date(current.timestamp) : now;
+            document.getElementById('panel').innerHTML = `
+                <div class="phead">
+                    <span class="date">${now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric' })}</span>
+                    <span class="updated">Updated ${ts.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })}</span>
+                </div>
+                <div class="stat">
+                    <span class="ico">${ICONS.thermo}</span>
+                    <div class="v"><span class="big">${deg(hi)}</span><span class="cap">${hiCap}</span></div>
+                    <div class="v"><span class="mid">${deg(lo)}</span><span class="cap">${loCap}</span></div>
+                </div>
+                <div class="stat">
+                    <span class="ico">${ICONS.drop(info.pop)}</span>
+                    <div class="v"><span class="big">${info.pop}%</span><span class="cap">Chance ${w.night ? 'tonight' : 'today'}</span></div>
+                    ${amount}
+                </div>
+                ${sunRow}
+                <section class="heads">
+                    <h2>Heads Up</h2>
+                    <ul>${hl.map(h => `<li>${hlIcon(h.icon)}<span>${h.text}</span></li>`).join('')}</ul>
+                </section>`;
+        }
+
+        function run() {
+            try {
+                // Data is loaded via liquid templates by the TRMNL server. See example-weather.json.
+                const current = JSON.parse(`{{current|json}}`);
+                const forecast = JSON.parse(`{{forecast|json}}`);
+                const location = JSON.parse(`{{location|json}}`);
+                // Newer API field; may be missing (renders empty/null). String.raw keeps the JSON's
+                // \n and \" escapes intact (alert instructions contain both).
+                let alerts = null;
+                try { alerts = JSON.parse(String.raw`{{alerts|json}}` || 'null'); } catch (e) { alerts = null; }
+                // Optional local-preview overrides: window.FUN_PREVIEW = { now: ISO, egg: 'owl' }
+                const pv = window.FUN_PREVIEW || {};
+                const now = pv.now ? new Date(pv.now) : new Date();
+                const period = pickPeriod(forecast, now);
+                const w = analyze(period);
+                const egg = 'egg' in pv ? pv.egg : pickEgg(w, now);
+                document.getElementById('scene').innerHTML = drawScene(w, egg, now);
+                renderPanel(period, w, getPeriods(forecast), now, current, location, alerts);
+            } catch (err) {
+                document.getElementById('scene').innerHTML = `<div style="padding:16px; font:700 24px system-ui">Render error</div><div style="padding:0 16px; font:400 18px system-ui">${String(err)}</div>`;
+            }
+        }
+
+        run();
+    })();
+</script>
