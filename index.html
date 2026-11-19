@@ -135,14 +135,14 @@
     }
 
     .icon svg {
-        width: 88px;
-        height: 88px;
+        width: 100px;
+        height: 100px;
         stroke: #000;
         fill: none;
-        stroke-width: 7;
+        stroke-width: 6;
         stroke-linecap: round;
         stroke-linejoin: round;
-        shape-rendering: crispEdges;
+        shape-rendering: geometricPrecision;
     }
 
     .icon svg * {
@@ -151,10 +151,18 @@
 
     .icon svg .fill {
         fill: #000;
-        stroke: none;
+        stroke-width: 3;
     }
 
-    .icon svg .fill-white {
+    /* Cloud = union of shapes. Draw them with a double-width stroke, then
+       paint the same shapes white on top: leaves one clean outer outline
+       and a white interior that masks anything behind (e.g. the sun). */
+    .icon svg .cloud-o {
+        fill: #fff;
+        stroke-width: 12;
+    }
+
+    .icon svg .cloud-i {
         fill: #fff;
         stroke: none;
     }
@@ -240,78 +248,57 @@
         }
 
         function svg(type) {
-            // New playful, consistent icons. One 120×120 viewBox for roomy edges.
-            const vb = '0 0 120 120';
-            const rays = (cx, cy, inner, outer) => Array.from({ length: 8 }, (_, i) => {
-                const a = i * Math.PI / 4; const x1 = cx + inner * Math.cos(a), y1 = cy + inner * Math.sin(a), x2 = cx + outer * Math.cos(a), y2 = cy + outer * Math.sin(a);
-                return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" />`;
+            // Outline icons on a 100×100 grid (rendered 1:1). Strokes come from CSS.
+            const wrap = (label, body) => `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${label}">${body}</svg>`;
+
+            const sun = (cx, cy, r, inner, outer) => {
+                const rays = Array.from({ length: 8 }, (_, i) => {
+                    const a = i * Math.PI / 4, c = Math.cos(a), s = Math.sin(a);
+                    return `<line x1="${(cx + inner * c).toFixed(1)}" y1="${(cy + inner * s).toFixed(1)}" x2="${(cx + outer * c).toFixed(1)}" y2="${(cy + outer * s).toFixed(1)}" />`;
+                }).join('');
+                return `${rays}<circle cx="${cx}" cy="${cy}" r="${r}" />`;
+            };
+
+            // Cloud body spans x 17–83, y 26–74 before translation.
+            const cloud = (dx = 0, dy = 0) => {
+                const shapes = `<rect x="17" y="46" width="66" height="28" rx="14" />
+                    <circle cx="56" cy="46" r="20" />
+                    <circle cx="36" cy="52" r="13" />`;
+                return `<g transform="translate(${dx} ${dy})"><g class="cloud-o">${shapes}</g><g class="cloud-i">${shapes}</g></g>`;
+            };
+
+            const streaks = (xs, y1, y2) => xs.map(x => `<line x1="${x}" y1="${y1}" x2="${x - 5}" y2="${y2}" />`).join('');
+
+            const flake = (x, y, r = 7) => [0, 60, 120].map(deg => {
+                const a = deg * Math.PI / 180, dx = r * Math.cos(a), dy = r * Math.sin(a);
+                return `<line x1="${(x - dx).toFixed(1)}" y1="${(y - dy).toFixed(1)}" x2="${(x + dx).toFixed(1)}" y2="${(y + dy).toFixed(1)}" />`;
             }).join('');
-
-            const cloudBlob = (x = 0, y = 0, s = 1) => `
-          <g class="fill" transform="translate(${x} ${y}) scale(${s})">
-            <circle cx="42" cy="64" r="18" />
-            <circle cx="60" cy="56" r="22" />
-            <circle cx="82" cy="64" r="18" />
-            <rect x="34" y="64" width="52" height="22" rx="11" ry="11" />
-          </g>`;
-
-            const drops = (ys = 92) => [36, 54, 72, 90].map(x => `<path class="fill" d="M${x} ${ys} c 3 -8 8 -8 10 0 c -3 10 -7 10 -10 0 z" />`).join('');
-            const flakes = (ys = 90) => [42, 60, 78].map(x => `<g>
-            <line x1="${x}" y1="${ys - 6}" x2="${x}" y2="${ys + 6}" />
-            <line x1="${x - 6}" y1="${ys}" x2="${x + 6}" y2="${ys}" />
-            <line x1="${x - 4}" y1="${ys - 4}" x2="${x + 4}" y2="${ys + 4}" />
-            <line x1="${x + 4}" y1="${ys - 4}" x2="${x - 4}" y2="${ys + 4}" />
-          </g>`).join('');
-            const bolt = (x = 60, y = 86) => `<polygon class="fill" points="${x - 4},${y} ${x + 6},${y} ${x},${y + 12} ${x + 14},${y + 12} ${x - 6},${y + 34} ${x},${y + 16} ${x - 12},${y + 16}" />`;
 
             switch (type) {
                 case 'sunny':
-                    // Clean sun (no face), inset rays to avoid clipping
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="sunny">
-              ${rays(60, 60, 30, 44)}
-              <circle cx="60" cy="60" r="22" />
-            </svg>`;
+                    return wrap('sunny', sun(50, 50, 17, 27, 38));
                 case 'partly':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="partly cloudy">
-              ${rays(52, 48, 22, 36)}
-              <circle cx="52" cy="48" r="18" />
-              ${cloudBlob(0, 6, 1.1)}
-            </svg>`;
+                    return wrap('partly cloudy', sun(40, 40, 15, 23, 32) + cloud(8, 14));
                 case 'cloud':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="cloudy">
-              ${cloudBlob()}
-            </svg>`;
+                    return wrap('cloudy', cloud(0, 0));
                 case 'rain':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="rain">
-              ${cloudBlob(0, -2, 1)}
-              ${drops(94)}
-            </svg>`;
+                    return wrap('rain', cloud(0, -10) + streaks([36, 54, 72], 74, 90));
                 case 'storm':
-                    // Higher cloud + bold zig‑zag bolt below it; add two drops for drama
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="thunderstorm">
-              ${cloudBlob(0, -6, 1)}
-              ${bolt(60, 86)}
-              ${[44, 76].map(x => `<path class=\"fill\" d=\"M${x} 96 c 3 -8 8 -8 10 0 c -3 10 -7 10 -10 0 z\" />`).join('')}
-            </svg>`;
+                    return wrap('thunderstorm', cloud(0, -14)
+                        + `<path class="fill" d="M53 66 L37 86 L50 86 L43 98 L66 77 L53 77 L62 66 Z" />`
+                        + streaks([28, 80], 70, 84));
                 case 'snow':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="snow">
-              ${cloudBlob(0, -2, 1)}
-              ${flakes(92)}
-            </svg>`;
+                    return wrap('snow', cloud(0, -12) + `<g stroke-width="4">${flake(28, 80, 9) + flake(50, 90, 9) + flake(72, 80, 9)}</g>`);
                 case 'fog':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="fog">
-              ${cloudBlob(0, -2, 1)}
-              ${[96, 104, 112].map(y => `<path d=\"M24 ${y} q18 -6 36 0 t36 0\" />`).join('')}
-            </svg>`;
+                    return wrap('fog', cloud(0, -12) + '<line x1="20" y1="76" x2="70" y2="76" /><line x1="30" y1="90" x2="82" y2="90" />');
                 case 'wind':
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="wind">
-              <path d="M20 70 q20 -8 40 0 t40 0" />
-              <path d="M28 86 q16 -6 32 0 t32 0" />
-              <circle class="fill" cx="98" cy="70" r="3" />
-              <circle class="fill" cx="88" cy="86" r="2.5" />
-            </svg>`;
+                    return wrap('wind', `<g transform="translate(4 2)">
+                        <path d="M12 36 H56 A10 10 0 1 0 46 26" />
+                        <path d="M12 52 H70 A11 11 0 1 1 59 63" />
+                        <path d="M12 70 H44 A9 9 0 1 1 35 79" />
+                    </g>`);
                 default:
-                    return `<svg viewBox="${vb}" preserveAspectRatio="xMidYMid meet" aria-label="unknown"><text x="60" y="70" font-size="56" text-anchor="middle">?</text></svg>`;
+                    return wrap('unknown', '<text x="50" y="68" font-size="56" text-anchor="middle" fill="#000" stroke="none">?</text>');
             }
         }
 
