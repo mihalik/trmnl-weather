@@ -7,195 +7,9 @@
   "Heads Up" highlights from the upcoming forecast.
 -->
 
-<style>
-    html,
-    body {
-        margin: 0;
-        background: #fff;
-        color: #000;
-    }
-
-    *,
-    *::before,
-    *::after {
-        box-sizing: border-box;
-        -webkit-user-select: none;
-        user-select: none;
-    }
-
-    svg {
-        display: block;
-    }
-
-    .screen {
-        width: 800px;
-        height: 480px;
-        margin: 0 auto;
-        display: grid;
-        grid-template-columns: 400px 1fr;
-        overflow: hidden;
-    }
-
-    .scene {
-        width: 400px;
-        height: 480px;
-        border-right: 2px solid #000;
-    }
-
-    .scene svg {
-        shape-rendering: geometricPrecision;
-    }
-
-    /* Right half: today's numbers + rules-driven highlights */
-    .panel {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-        padding: 12px 18px 10px 20px;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-    }
-
-    .panel svg {
-        fill: none;
-        stroke: #000;
-        stroke-width: 3;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        flex: none;
-    }
-
-    .phead {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        padding-bottom: 6px;
-        border-bottom: 2px solid #000;
-    }
-
-    .phead .date {
-        font-weight: 700;
-        font-size: 24px;
-    }
-
-    .phead .updated {
-        font-size: 13px;
-    }
-
-    .stat {
-        display: flex;
-        align-items: center;
-        gap: 12px;
-        margin-top: 10px;
-    }
-
-    .stat .ico {
-        width: 48px;
-        height: 52px;
-    }
-
-    .stat .v {
-        display: flex;
-        flex-direction: column;
-        min-width: 0;
-    }
-
-    .stat .v + .v {
-        margin-left: 10px;
-    }
-
-    .big {
-        font-weight: 800;
-        font-size: 54px;
-        line-height: 1;
-    }
-
-    .mid {
-        font-weight: 500;
-        font-size: 40px;
-        line-height: 1;
-    }
-
-    .amt {
-        font-weight: 700;
-        font-size: 28px;
-        line-height: 1.1;
-    }
-
-    .sunv {
-        font-weight: 700;
-        font-size: 30px;
-        line-height: 1;
-    }
-
-    .sunv small {
-        font-size: 16px;
-        font-weight: 600;
-        margin-left: 2px;
-    }
-
-    .cap {
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        margin-top: 3px;
-    }
-
-    .stat.sun .ico {
-        width: 40px;
-        height: 40px;
-    }
-
-    .heads {
-        margin-top: 12px;
-        border-top: 2px solid #000;
-        padding-top: 6px;
-    }
-
-    .heads h2 {
-        margin: 0 0 4px;
-        font-size: 15px;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
-    }
-
-    .heads ul {
-        list-style: none;
-        margin: 0;
-        padding: 0;
-    }
-
-    .heads li {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        font-size: 20px;
-        line-height: 1.18;
-        margin-top: 6px;
-    }
-
-    .heads li svg {
-        width: 30px;
-        height: 30px;
-        stroke-width: 2.5;
-    }
-
-    .heads li span {
-        display: -webkit-box;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
-    }
-</style>
-
-<main class="screen" aria-label="TRMNL fun weather">
-    <section class="scene" id="scene"></section>
-    <section class="panel" id="panel"></section>
-</main>
-
 <script>
-    ; (() => {
+    // Scene drawing + helpers shared with the panel script below (pushed to markup_shared).
+    window.FunWeather = (() => {
         const TZ = 'America/Chicago';
 
         // Clothing tiers (deg F, using the period's high by day / low by night)
@@ -213,6 +27,7 @@
             if (n >= 0 && n < 1) return Math.round(n * 100);
             return Math.max(0, Math.min(100, Math.round(n)));
         };
+        const getPeriods = (forecast) => forecast?.periods || forecast?.properties?.periods || [];
 
         // Small seeded PRNG so drawings (and easter eggs) are stable between refreshes.
         const rng = (seed) => () => {
@@ -295,39 +110,82 @@
 
         // ---------- Easter eggs ----------
 
+        // Each test gets (w, s): the analyzed weather and seasonal(now), so eggs can step aside for holiday art.
         const EGGS = {
             owl: w => w.night && !w.rain && !w.snow,
             shootingStar: w => w.night && ['clear', 'mostly'].includes(w.sky),
             ufo: w => w.night && !w.rain,
             airplane: w => !w.night && !w.thunder,
-            balloon: w => !w.night && !w.windy && !w.rain && !w.snow,
+            balloon: (w, s) => !w.night && !w.windy && !w.rain && !w.snow && !s.flag,
             geese: w => !w.night && !w.rain,
             birdOnHead: w => !w.night && !w.rain && !w.snow && w.tier !== 'coat',
-            kite: w => !w.night && w.windy && !w.rain,
+            kite: (w, s) => !w.night && w.windy && !w.rain && !s.flag,
             rainbow: w => !w.night && w.rain,
             snowman: w => w.snow,
-            catInWindow: w => !w.umbrella,
-            bigfoot: w => true,
-            deer: w => !w.rain,
-            rabbit: w => !w.rain && !w.snow,
-            blackhawks: w => !w.thunder
+            catInWindow: (w, s) => !w.umbrella && !s.halloween,
+            bigfoot: (w, s) => !s.thanksgiving,
+            deer: (w, s) => !w.rain && !s.thanksgiving,
+            rabbit: (w, s) => !w.rain && !w.snow && !s.easter,
+            blackhawks: w => !w.thunder,
+            cow: (w, s) => !w.thunder && !s.thanksgiving,
+            cowboyHats: w => true,
+            castle: w => true,
+            alamo: w => true,
+            armadillo: w => !w.snow
         };
+
+        // Relative odds among eligible eggs (default 1): house swaps are extra rare
+        const EGG_WEIGHT = { castle: 0.2, alamo: 0.2 };
 
         function pickEgg(w, now) {
             const lp = localParts(now);
             const r = rng(hash(`${lp.year}-${lp.month}-${lp.day}-${lp.hour}`));
             if (r() >= EGG_CHANCE) return null;
-            const ok = Object.keys(EGGS).filter(k => EGGS[k](w));
-            return ok.length ? ok[Math.floor(r() * ok.length)] : null;
+            const s = seasonal(now);
+            const ok = Object.keys(EGGS).filter(k => EGGS[k](w, s));
+            let x = r() * ok.reduce((t, k) => t + (EGG_WEIGHT[k] ?? 1), 0);
+            return ok.find(k => (x -= EGG_WEIGHT[k] ?? 1) < 0) || null;
+        }
+
+        // Day of month of the nth weekday (dow 0 = Sunday) in a month; n = -1 for the last one.
+        function nthWeekday(year, month, dow, n) {
+            if (n > 0) return 1 + (dow - new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 7) % 7 + (n - 1) * 7;
+            const last = new Date(Date.UTC(year, month, 0));
+            return last.getUTCDate() - (last.getUTCDay() - dow + 7) % 7;
+        }
+
+        // Western Easter (anonymous Gregorian algorithm) -> [month, day]
+        function easter(y) {
+            const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+            const g = Math.floor((b - Math.floor((b + 8) / 25) + 1) / 3);
+            const h = (19 * a + b - d - g + 15) % 30, l = (32 + 2 * e + 2 * Math.floor(c / 4) - h - c % 4) % 7;
+            const n = h + l - 7 * Math.floor((a + 11 * h + 22 * l) / 451) + 114;
+            return [Math.floor(n / 31), n % 31 + 1];
         }
 
         function seasonal(now) {
-            const { month, day } = localParts(now);
+            const { year, month, day, hour } = localParts(now);
+            const on = (m, d) => month === m && day === d;
+            const memorial = on(5, nthWeekday(year, 5, 1, -1));
+            // Flag days: Presidents, Memorial, Flag Day, Independence Day, Labor, Patriot, Veterans
+            const flagDay = on(2, nthWeekday(year, 2, 1, 3)) || memorial || on(6, 14) || on(7, 3) || on(7, 4)
+                || on(9, nthWeekday(year, 9, 1, 1)) || on(9, 11) || on(11, 11);
+            const [em, ed] = easter(year);
             return {
                 pumpkin: month === 10 && day >= 15,
+                halloween: on(10, 31),
+                thanksgiving: on(11, nthWeekday(year, 11, 4, 4)),
                 wreath: month === 12 && day <= 26,
-                fireworks: (month === 7 && day === 4) || (month === 12 && day === 31) || (month === 1 && day === 1),
-                party: (month === 2 && day === 17) || (month === 7 && day === 13)
+                lights: month === 12 || on(1, 1),
+                santa: on(12, 24) || on(12, 25),
+                fireworks: on(7, 4) || on(12, 31) || on(1, 1),
+                party: on(2, 17) || on(7, 13),
+                // Half-staff on Patriot Day and until noon on Memorial Day
+                flag: !flagDay ? null : on(9, 11) || (memorial && hour < 12) ? 'half' : 'full',
+                easter: on(em, ed),
+                valentine: on(2, 14),
+                stPatrick: on(3, 17),
+                groundhog: on(2, 2)
             };
         }
 
@@ -519,7 +377,7 @@
 
         // ---------- Background: house, trees ----------
 
-        function farm(w, r, season) {
+        function farm(w, r, season, egg) {
             let s = '';
             // Ground
             s += `<path d="M0 ${HORIZON} H400"/>`;
@@ -541,8 +399,24 @@
             s += `<path d="${fuzz(canopy, 1.6, r)}" ${W}/>`;
             s += `<path d="M346 206 q4 -4 8 0 M366 216 q4 -4 8 0 M342 226 q4 -4 8 0 M362 232 q3 -3 6 0" ${thin(1.2)}/>`;
 
-            // House: chimney, body, gable roof, siding, gothic window, door
-            s += `<path d="M244 128 V92 H258 V136" ${W}/>`;
+            s += egg === 'castle' ? castle(w) : egg === 'alamo' ? alamo(w) : farmhouse(w, season);
+
+            if (season.wreath) {
+                s += `<circle cx="200" cy="234" r="7" ${W} stroke-width="3" stroke-dasharray="3 2"/><path d="M196 242 l4 -3 l4 3" ${thin(1.5)}/>`;
+            }
+            if (season.pumpkin) {
+                // Carved on Halloween
+                const face = season.halloween
+                    ? `<path d="M-6 -2 l2 -3.5 l2 3.5 Z M2 -2 l2 -3.5 l2 3.5 Z M-6 1.5 Q0 6.5 6 1.5 L4 3 L2 2 L0 3.5 L-2 2 L-4 3 Z" ${BLK} ${thin(0.8)}/>`
+                    : `<path d="M-3 -7 Q0 0 -3 7 M3 -7 Q0 0 3 7" ${thin(1.3)}/>`;
+                s += `<g transform="translate(176 ${HORIZON - 9})"><ellipse rx="10" ry="8" ${W}/>${face}<path d="M0 -8 l2 -5" ${thin(1.3)}/></g>`;
+            }
+            return s;
+        }
+
+        // The painting's farmhouse: chimney, body, gable roof, siding, gothic window, door
+        function farmhouse(w, season) {
+            let s = `<path d="M244 128 V92 H258 V136" ${W}/>`;
             if (w.tier === 'coat') {
                 s += halo(`<path d="M251 86 q-8 -10 2 -18 q10 -8 2 -18 q-6 -8 4 -16" ${thin(2)}/>`, 5);
             }
@@ -560,6 +434,11 @@
             s += `<path d="${gw}" ${W} stroke-width="2.5"/>`;
             if (w.night) s += `<path d="${gw}" ${BLK} stroke="none" transform="translate(200 127) scale(.78) translate(-200 -127)"/>`;
             s += `<path d="M200 104 V154 M188 130 H212" ${thin(1.5)} ${w.night ? 'stroke="#fff"' : ''}/>`;
+            if (season.halloween) {
+                // Ghost in the window
+                s += `<path d="M193 150 V124 Q193 113 200 113 Q207 113 207 124 V150 l-2.3 -3 l-2.4 3 l-2.3 -3 l-2.3 3 l-2.4 -3 Z" ${W} ${thin(1.5)}/>`
+                    + `<ellipse cx="197.5" cy="124" rx="1.4" ry="2" ${BLK} stroke="none"/><ellipse cx="202.5" cy="124" rx="1.4" ry="2" ${BLK} stroke="none"/><ellipse cx="200" cy="131" rx="1.6" ry="2.2" ${BLK} stroke="none"/>`;
+            }
             s += `<path d="M183 158 H217" stroke-width="2.5"/>`;
 
             // Windows + door on the body (mostly hidden behind us)
@@ -569,12 +448,77 @@
             s += `<rect x="188" y="222" width="24" height="${HORIZON - 222}" ${W}/><circle cx="207" cy="248" r="1.6" ${BLK}/>`;
             s += `<path d="M180 ${HORIZON} H220" stroke-width="3"/>`;
 
-            if (season.wreath) {
-                s += `<circle cx="200" cy="234" r="7" ${W} stroke-width="3" stroke-dasharray="3 2"/><path d="M196 242 l4 -3 l4 3" ${thin(1.5)}/>`;
+            if (season.lights) {
+                // Christmas lights along the eaves: alternating bulbs by day, all lit at night
+                let b = '';
+                for (const [x0, y0, x1, y1, nx] of [[112, 168, 196, 78, -1], [204, 78, 288, 168, 1]]) {
+                    for (let i = 0; i <= 9; i++) {
+                        const x = x0 + (x1 - x0) * i / 9 + nx * 2.9, y = y0 + (y1 - y0) * i / 9 - 2.7;
+                        b += w.night
+                            ? `<circle cx="${f(x)}" cy="${f(y)}" r="2.6" fill="#fff" stroke="none"/>`
+                            : `<circle cx="${f(x)}" cy="${f(y)}" r="2.4" ${i % 2 ? BLK : W} ${thin(1.2)}/>`;
+                    }
+                }
+                s += b;
             }
-            if (season.pumpkin) {
-                s += `<g transform="translate(176 ${HORIZON - 9})"><ellipse rx="10" ry="8" ${W}/><path d="M-3 -7 Q0 0 -3 7 M3 -7 Q0 0 3 7 M0 -8 l2 -5" ${thin(1.3)}/></g>`;
+            return s;
+        }
+
+        // Battlement top edge from x0 to x1 at height y (merlons stick up by h)
+        const crenels = (x0, x1, y, n, h = 7) => {
+            const step = (x1 - x0) / (2 * n - 1);
+            let d = `M${x0} ${y + h}`;
+            for (let i = 0; i < 2 * n - 1; i++) {
+                const x = f(x0 + i * step);
+                d += i % 2 ? ` V${y + h} H${f(x + step)}` : ` V${y} H${f(x + step)}`;
             }
+            return d + ` V${y + h}`;
+        };
+
+        // Easter egg house: a castle with a keep, two round-roofed towers, pennants and a portcullis
+        function castle(w) {
+            let s = '';
+            for (const [x, flip] of [[112, 1], [250, -1]]) {
+                s += `<path d="${crenels(x - 4, x + 42, 100, 4)} V${HORIZON} H${x - 4} Z" ${W}/>`;
+                s += `<path d="M${x - 2} 100 L${x + 19} 52 L${x + 40} 100 Z" ${W}/>`;
+                s += `<path d="M${x + 19} 52 V34 l${12 * flip} 4 l${-12 * flip} 4" ${W} ${thin(1.8)}/>`;
+                s += `<rect x="${x + 16}" y="126" width="6" height="16" rx="3" ${BLK} ${thin(1.3)}/>`;
+                s += `<path d="M${x - 4} 110 H${x + 42}" ${thin(1.4)}/>`;
+            }
+            s += `<path d="${crenels(150, 250, 128, 6)} V${HORIZON} H150 Z" ${W}/>`;
+            // Stones
+            let st = '';
+            for (let y = 150; y < HORIZON; y += 14) for (let x = 156 + (y / 14 % 2) * 9; x < 244; x += 30) st += `M${x} ${y} h10 `;
+            for (const x of [118, 256]) for (let y = 160; y < HORIZON; y += 18) st += `M${x + (y % 36 ? 6 : 16)} ${y} h10 `;
+            s += `<path d="${st}" ${thin(1)}/>`;
+            // Arched window over the gate, and the gate with its portcullis
+            s += `<path d="M193 176 V162 Q193 154 200 154 Q207 154 207 162 V176 Z" ${w.night ? BLK : W} ${thin(1.8)}/>`;
+            s += `<path d="M180 ${HORIZON} V212 Q180 192 200 192 Q220 192 220 212 V${HORIZON}" ${W} stroke-width="3"/>`;
+            s += `<path d="M186 ${HORIZON} V204 M193 ${HORIZON} V196 M200 ${HORIZON} V194 M207 ${HORIZON} V196 M214 ${HORIZON} V204 M182 214 H218 M181 230 H219 M181 246 H219" ${thin(1.6)}/>`;
+            return s;
+        }
+
+        // Easter egg house: the Alamo's chapel facade (the famous hump, paired columns, niches)
+        function alamo(w) {
+            const top = 'M116 150 H150 Q157 150 159 142 Q163 128 176 126 Q187 124 189 112 Q192 100 200 100 Q208 100 211 112 Q213 124 224 126 Q237 128 241 142 Q243 150 250 150 H284';
+            let s = `<path d="${top} V${HORIZON} H116 Z" ${W}/>`;
+            s += `<path d="M112 150 H288 M114 194 H286" stroke-width="3"/>`;
+            // Stone texture
+            let st = '';
+            for (let y = 162; y < HORIZON; y += 13) for (let x = 122 + (y % 2) * 8; x < 278; x += 26) if (x < 162 || x > 236) st += `M${x} ${y} h8 `;
+            s += `<path d="${st}" ${thin(1)}/>`;
+            // Paired columns beside the door, both levels
+            for (const x of [164, 174, 226, 236]) {
+                s += `<rect x="${x - 2.5}" y="198" width="5" height="${HORIZON - 198}" ${W} ${thin(1.4)}/><path d="M${x - 4} 198 H${x + 4}" stroke-width="2"/>`;
+            }
+            for (const x of [170, 230]) s += `<rect x="${x - 2.5}" y="154" width="5" height="38" ${W} ${thin(1.4)}/>`;
+            // Niches
+            const niche = (x, y) => `<path d="M${x - 7} ${y + 26} V${y + 8} Q${x - 7} ${y} ${x} ${y} Q${x + 7} ${y} ${x + 7} ${y + 8} V${y + 26} Z" ${W} ${thin(1.6)}/><path d="M${x - 9} ${y + 28} H${x + 9}" ${thin(1.6)}/>`;
+            s += niche(144, 206) + niche(256, 206) + niche(144, 158) + niche(256, 158);
+            // Window and arched door
+            s += `<path d="M194 186 V172 Q194 164 200 164 Q206 164 206 172 V186 Z" ${BLK} stroke-width="2"/>`;
+            s += `<path d="M186 ${HORIZON} V222 Q186 206 200 206 Q214 206 214 222 V${HORIZON}" ${BLK} stroke-width="2.5"/>`;
+            s += `<path d="M182 ${HORIZON} V222 Q182 202 200 202 Q218 202 218 222 V${HORIZON}" ${thin(1.6)}/>`;
             return s;
         }
 
@@ -591,8 +535,44 @@
                 + `</g>`;
         }
 
+        // Holiday / egg hats, brim centered at (x, y), tilted by deg. Black hats get a white edge for night skies.
+        const DARK = `${BLK} stroke="#fff" stroke-width="1.6"`;
+        const tilt = (x, y, deg, inner, k = 1) => `<g transform="translate(${x} ${y}) rotate(${deg}) scale(${k})">${inner}</g>`;
+
+        const santaHat = (x, y, deg, r, k) => tilt(x, y, deg,
+            `<path d="M-24 -4 Q-20 -40 4 -48 Q26 -52 34 -26 Q24 -32 16 -28 Q20 -16 24 -4 Z" ${DARK}/>`
+            + `<path d="${fuzz(spline([[-28, -10], [0, -14], [28, -10], [29, 2], [0, -2], [-29, 2]], true, 4), 1.4, r)}" ${W} stroke-width="2"/>`
+            + `<path d="${fuzz(spline([[34, -34], [41, -30], [41, -22], [34, -18], [27, -22], [27, -30]], true, 3), 1.4, r)}" ${W} stroke-width="2"/>`, k);
+
+        const witchHat = (x, y, deg) => tilt(x, y, deg,
+            `<path d="M-48 2 Q0 -14 48 2 Q0 12 -48 2 Z" ${DARK}/>`
+            + `<path d="M-22 -2 Q-14 -30 -6 -50 Q2 -66 18 -62 Q6 -56 8 -44 Q12 -22 22 -2 Q0 -8 -22 -2 Z" ${DARK}/>`
+            + `<path d="M-20 -8 Q0 -14 20 -8 L18 -15 Q0 -21 -18 -15 Z" ${W} ${thin(1.2)}/><rect x="-5" y="-19" width="10" height="9" ${W} stroke-width="2"/>`);
+
+        const cowboyHat = (x, y, deg, dark) => tilt(x, y, deg,
+            `<path d="M-21 -4 Q-24 -28 -14 -34 Q0 -27 14 -34 Q24 -28 21 -4 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`
+            + `<path d="M-20.5 -9 Q0 -13 20.5 -9" stroke="${dark ? '#fff' : '#000'}" stroke-width="3.5"/>`
+            + `<path d="M-48 -8 Q-42 4 -20 2 Q0 0 20 2 Q42 4 48 -8 Q40 -3 22 -6 Q0 -9 -22 -6 Q-40 -3 -48 -8 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`);
+
+        const shamrock = (x, y, s = 1, white = false) => {
+            const leaf = 'M0 0 C-3 -2 -5 -5 -3 -7 C-2 -8 0 -8 0 -6 C0 -8 2 -8 3 -7 C5 -5 3 -2 0 0 Z';
+            return `<g transform="translate(${x} ${y}) scale(${s})" ${white ? 'fill="#fff" stroke="#fff"' : BLK} stroke-width="0.8">`
+                + [0, 120, 240].map(a => `<path d="${leaf}" transform="rotate(${a})"/>`).join('')
+                + `<path d="M0 0 q2 5 1 9" fill="none" stroke-width="1.6"/></g>`;
+        };
+
+        const leprechaunHat = (x, y, deg, k) => tilt(x, y, deg,
+            `<path d="M-17 -2 L-14 -34 H14 L17 -2 Z" ${DARK}/>`
+            + `<path d="M-16.4 -6 L-15.5 -15 H15.5 L16.4 -6 Z" ${W} ${thin(1.2)}/><rect x="-5" y="-15" width="10" height="9" ${BLK} stroke="none"/><rect x="-2.5" y="-12.6" width="5" height="4.2" ${W} stroke="none"/>`
+            + `<path d="M-34 0 Q0 -8 34 0 Q0 8 -34 0 Z" ${DARK}/>` + shamrock(9, -24, 0.9, true), k);
+
+        // Hat priority: birthday > holiday > cowboy egg > cold-weather beanie
+        const hatFor = (who, w, season, egg) => season.party ? 'party' : season.santa ? 'santa'
+            : season.halloween && who === 'her' ? 'witch' : season.stPatrick && who === 'him' ? 'leprechaun'
+            : egg === 'cowboyHats' ? 'cowboy' : w.tier === 'coat' ? 'beanie' : null;
+
         // Her: left, gray bob, rimless glasses, big smile, ring pendant.
-        function her(w, r, season) {
+        function her(w, r, season, egg) {
             let s = '';
             const cx = 118;
             // Hair (back silhouette)
@@ -603,12 +583,24 @@
             s += `<path d="M28 480 L34 374 Q38 328 78 318 Q98 313 106 306 L130 306 Q138 313 158 318 Q198 328 202 374 L208 480 Z" ${W}/>`;
 
             // Neck / neckline
-            const neckline = w.tier === 'tank' ? 'L102 310 Q118 346 134 310' : 'L104 306 L118 338 L132 306';
-            s += `<path d="M106 278 V302 ${neckline} L130 302 V278 Z" ${W}/>`;
+            if (season.swim) {
+                // Bare neck and collarbones (covers the torso's top edge)
+                s += `<path d="M106 278 V310 H130 V278 Z" ${W} stroke="none"/><path d="M106 278 V306 M130 278 V306" />`;
+                s += `<path d="M94 322 Q104 317 113 322 M123 322 Q132 317 142 322" ${thin(1.3)}/>`;
+            } else {
+                const neckline = w.tier === 'tank' ? 'L102 310 Q118 346 134 310' : 'L104 306 L118 338 L132 306';
+                s += `<path d="M106 278 V302 ${neckline} L130 302 V278 Z" ${W}/>`;
+            }
 
             // Clothing details
             s += `<path d="M70 364 Q66 420 66 480 M166 364 Q170 420 170 480" ${thin(1.6)}/>`;
-            if (w.tier === 'tank') {
+            if (season.swim) {
+                // Polka-dot halter bikini top
+                s += `<path d="M95 344 L108 306 M141 344 L128 306 M74 390 L68 392 M162 390 L168 392 M113 393 H123" ${thin(1.8)}/>`;
+                s += `<path d="M74 390 Q78 362 95 342 Q111 362 113 393 Q95 408 74 390 Z M162 390 Q158 362 141 342 Q125 362 123 393 Q141 408 162 390 Z" ${BLK} stroke-width="2"/>`;
+                s += [[85, 384], [95, 366], [103, 382], [94, 395], [151, 384], [141, 366], [133, 382], [142, 395]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.1" fill="#fff" stroke="none"/>`).join('');
+                s += `<path d="M116 452 q2 3 4 0" ${thin(1.4)}/>`;
+            } else if (w.tier === 'tank') {
                 s += `<path d="M90 316 L88 366 Q76 384 36 392 M146 316 L148 366 Q160 384 200 392" ${thin(2)}/>`;
             } else if (w.tier === 'tee') {
                 s += `<path d="M34 392 Q50 398 68 394 M168 394 Q186 398 202 392" ${thin(2)}/>`;
@@ -622,7 +614,7 @@
                 s += `<path d="M98 296 Q118 304 138 296 L140 318 Q118 326 96 318 Z" ${W}/>`;
                 s += `<path d="M118 326 V480" stroke-width="2"/><path d="M118 330 V480" ${thin(1)} stroke-dasharray="1 3" transform="translate(3 0)"/>`;
                 s += `<path d="M36 372 Q76 380 114 378 M122 378 Q160 380 200 372 M34 422 Q76 430 114 428 M122 428 Q160 430 202 422 M32 466 Q76 474 114 472 M122 472 Q160 474 204 466" ${thin(1.6)}/>`;
-            } else {
+            } else if (!season.swim) {
                 // Ring pendant necklace
                 s += `<path d="M107 304 Q110 330 117 346 M129 304 Q126 330 119 346" ${thin(0.9)}/>`;
                 s += `<circle cx="118" cy="351" r="5" ${thin(1.8)}/>`;
@@ -640,9 +632,12 @@
             s += `<path d="M126 213 Q100 226 85 274 M126 213 Q108 220 94 240 M127 214 Q146 232 154 282 M130 210 Q144 214 152 226 M84 282 Q80 292 72 297 M154 284 Q158 292 165 297 M112 209 Q96 214 86 232" ${thin(1.1)}/>`;
 
             // Hat
-            if (season.party) {
-                s += partyHat(114, 214, -14, r);
-            } else if (w.tier === 'coat') {
+            const hat = hatFor('her', w, season, egg);
+            if (hat === 'party') s += partyHat(114, 214, -14, r);
+            else if (hat === 'santa') s += santaHat(116, 222, -10, r);
+            else if (hat === 'witch') s += witchHat(116, 214, -8);
+            else if (hat === 'cowboy') s += cowboyHat(118, 226, -5, false);
+            else if (hat === 'beanie') {
                 s += `<path d="M79 246 Q80 198 118 193 Q156 198 157 246 Q118 226 79 246 Z" ${W}/>`;
                 s += `<path d="M81 234 Q118 214 155 234" ${thin(1.6)}/>`;
                 for (let i = 0; i <= 12; i++) {
@@ -672,6 +667,32 @@
             return s;
         }
 
+        // His t-shirt print, centered on the chest below the beard (his coordinates)
+        const SHIRTS = ['weird', 'weird', 'apple', 'texas', 'yall'];
+        const SHIRT_CHANCE = 0.1; // per day; otherwise a plain tee
+        const SWIM_CHANCE = 0.1;   // per tank-top day
+        function shirtArt(kind) {
+            const font = `font-family="Helvetica, Arial, sans-serif" font-weight="900" text-anchor="middle" ${BLK} stroke="none"`;
+            switch (kind) {
+                case 'weird':
+                    return `<g ${font}><text x="283" y="380" font-size="11" letter-spacing="2">KEEP</text>`
+                        + `<text x="283" y="399" font-size="18">AUSTIN</text>`
+                        + `<text x="283" y="416" font-size="14" font-style="italic" letter-spacing="1">WEIRD</text></g>`;
+                case 'yall':
+                    return `<g ${font}><text x="283" y="406" font-size="26">Y'ALL</text></g>`
+                        + `<path d="M283 368 l2.4 5 5.4 .6 -4 3.7 1.1 5.3 -4.9 -2.7 -4.9 2.7 1.1 -5.3 -4 -3.7 5.4 -.6 Z" ${BLK} stroke="none"/>`;
+                case 'apple':
+                    return `<g transform="translate(266 360) scale(.85)" ${BLK} stroke="none">`
+                        + `<path d="M20 13 C23 10 28 9 31 9 C34 9 36 11 37 13 C33 15 32 20 33 24 C34 28 36 31 39 32 C38 36 36 40 33 43 C31 46 28 47 25 46 C23 45 21 44 19 44 C17 44 15 46 12 46 C9 46 6 43 4 39 C0 32 -1 24 2 19 C4 14 8 11 12 11 C15 11 17 12 20 13 Z"/>`
+                        + `<path d="M20 10 C20 5 24 1 29 0 C29 5 25 9 20 10 Z"/></g>`;
+                case 'texas':
+                    return `<g transform="translate(283 392)"><path d="M-12.2 -25.5 L0.5 -25.5 L0.5 -16.1 L3.8 -15.3 L6.7 -13.9 L10.4 -12.9 L13.3 -12.7 L17 -12.7 L19.9 -12.8 L23.4 -11.7 L25.2 -11.2 L25.2 -3.7 L27 1.1 L26.4 4.5 L26 7.4 L22.4 9.1 L20.8 10.3 L17.9 12.2 L14.6 14.2 L12.9 16.1 L11.2 19 L11.2 22.4 L12.3 25.5 L10 25.1 L7.5 24.3 L4.2 23.1 L2.5 18.5 L-0.8 14.7 L-2.4 10.3 L-5.4 7.2 L-9.1 6.5 L-10.7 7.2 L-12.4 10.9 L-14.1 10.1 L-16.1 9.1 L-18.2 7.6 L-19 5 L-22.8 0.6 L-25.3 -1.1 L-26.6 -2.7 L-27 -3.7 L-12.2 -3.7 Z" ${BLK} stroke-width="1.5"/>`
+                        + `<path d="M9.8 -1.2 l1.6 3.6 3.9 .4 -2.9 2.6 .8 3.8 -3.4 -2 -3.4 2 .8 -3.8 -2.9 -2.6 3.9 -.4 Z" fill="#fff" stroke="none"/></g>`;
+                default:
+                    return '';
+            }
+        }
+
         // Him: right, bald with short sides, rectangular glasses, big beard.
         function him(w, r, egg, season) {
             let s = '';
@@ -688,7 +709,12 @@
             s += `<path d="${torso}" fill="none" stroke-width="2.5"/>`;
             s += `<path d="M236 364 Q232 420 232 480 M330 364 Q334 420 334 480" ${thin(1.6)}/>`;
 
-            if (w.tier === 'tank') {
+            if (season.swim) {
+                // Shirtless: pecs, a little chest hair below the beard, belly button
+                s += `<path d="M246 378 Q262 390 278 382 M288 382 Q304 390 320 378" ${thin(1.5)}/>`;
+                s += `<path d="M272 352 q2 3 0 6 M283 356 q2 3 0 6 M294 352 q2 3 0 6 M277 394 q2 3 0 6 M289 394 q2 3 0 6 M283 410 q2 3 0 6" ${thin(1.1)}/>`;
+                s += `<path d="M281 440 q2 4 4 0" ${thin(1.5)}/>`;
+            } else if (w.tier === 'tank') {
                 s += `<path d="M252 316 L248 372 Q238 390 202 398 M312 316 L316 372 Q326 390 362 398" ${thin(2)}/>`;
             } else if (w.tier === 'tee') {
                 s += `<path d="M200 394 Q216 400 234 396 M332 396 Q348 400 364 394" ${thin(2)}/>`;
@@ -700,6 +726,7 @@
                 s += `<path d="M216 446 H252 V460 M312 446 H348 V460" ${thin(2)}/>`;
                 s += [372, 404, 436].map(y => `<path d="M206 ${y} q4 3 8 0 M350 ${y} q4 3 8 0" ${thin(1)}/>`).join('');
             }
+            if (!season.swim && (w.tier === 'tee' || w.tier === 'tank')) s += shirtArt(season.shirt);
             // Collar points beside the beard
             if (w.tier === 'long' || w.tier === 'coat') {
                 const big = w.tier === 'coat';
@@ -718,9 +745,12 @@
             // Short hair on the sides only
             s += `<path d="${fuzz(spline([[250, 242], [249, 226], [252, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
             s += `<path d="${fuzz(spline([[314, 242], [315, 226], [312, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
-            if (season.party) {
-                s += partyHat(286, 196, 14, r);
-            } else if (w.tier === 'coat') {
+            const hat = hatFor('him', w, season, egg);
+            if (hat === 'party') s += partyHat(286, 196, 14, r);
+            else if (hat === 'santa') s += santaHat(284, 208, 8, r, 1.15);
+            else if (hat === 'leprechaun') s += leprechaunHat(282, 208, 6, 1.25);
+            else if (hat === 'cowboy') s += cowboyHat(282, 206, 5, true);
+            else if (hat === 'beanie') {
                 s += `<path d="M245 228 Q244 180 282 175 Q320 180 319 228 Q282 208 245 228 Z" ${W}/>`;
                 s += `<path d="M246 216 Q282 196 318 216" ${thin(1.6)}/>`;
                 for (let i = 0; i <= 12; i++) {
@@ -729,7 +759,7 @@
                 }
                 s += `<path d="${fuzz(spline([[282, 158], [291, 162], [294, 170], [290, 178], [282, 180], [274, 178], [270, 170], [273, 162]], true, 3), 1.5, r)}" ${W}/>`;
             }
-            if (egg === 'birdOnHead' && !season.party) {
+            if (egg === 'birdOnHead' && !hat) {
                 s += `<g transform="translate(286 182)"><path d="M-10 0 Q-10 -12 2 -12 Q8 -12 10 -6 L16 -4 L10 -2 Q8 6 -2 6 L-16 4 Z" ${W} stroke-width="2"/><circle cx="5" cy="-7" r="1.4" ${BLK}/><path d="M-4 -4 Q0 2 6 0 M-2 6 V10 M3 6 V10" ${thin(1.4)}/></g>`;
             }
 
@@ -890,9 +920,95 @@
                     };
                     return heli(150, 30) + heli(220, 52) + heli(290, 74);
                 }
+                case 'cow': {
+                    // Holstein in front of the right-hand tree, facing left
+                    const body = 'M-30 -40 Q-30 -48 -22 -48 H24 Q32 -48 32 -40 V-24 Q32 -16 24 -16 H-22 Q-30 -16 -30 -24 Z';
+                    const cow = `<path d="M32 -44 Q40 -36 37 -20" ${thin(1.8)}/><path d="M35 -22 l2 6 l2 -6 Z" ${BLK} ${thin(1)}/>`
+                        + `<path d="M-24 -18 V0 M-15 -18 V0 M16 -18 V0 M25 -18 V0" stroke-width="3.2"/><path d="M-26 0 h4 M-17 0 h4 M14 0 h4 M23 0 h4" stroke-width="3"/>`
+                        + `<path d="${body}" ${W} stroke-width="2.2"/>`
+                        + `<g clip-path="url(#cowClip)" ${BLK} stroke="none"><ellipse cx="-12" cy="-40" rx="9" ry="6" transform="rotate(-15 -12 -40)"/><ellipse cx="10" cy="-27" rx="10" ry="7"/><ellipse cx="27" cy="-42" rx="7" ry="5"/><ellipse cx="-26" cy="-21" rx="5" ry="4"/></g>`
+                        + `<path d="M8 -16 Q12 -9 18 -16 M11 -13 V-9 M15 -13 V-9" ${W} ${thin(1.4)}/>`
+                        + `<path d="M-38 -45 Q-33 -51 -29 -48 Q-33 -44 -38 -45 Z M-47 -45 Q-53 -48 -55 -43 Q-51 -42 -47 -44 Z" ${W} ${thin(1.4)}/>`
+                        + `<path d="M-41 -48 q-1 -5 3 -7 M-45 -47 q-3 -4 -1 -8" ${thin(1.8)}/>`
+                        + `<path d="M-30 -42 Q-36 -50 -44 -47 L-51 -32 Q-53 -24 -46 -23 Q-38 -23 -35 -30 Q-32 -36 -30 -36 Z" ${W} stroke-width="2"/>`
+                        + `<ellipse cx="-46" cy="-27" rx="6.5" ry="4.5" ${W} ${thin(1.6)}/><circle cx="-48.5" cy="-27" r="1" ${BLK}/><circle cx="-44" cy="-27" r="1" ${BLK}/>`
+                        + `<circle cx="-40" cy="-39" r="1.5" ${BLK}/>`;
+                    return `<defs><clipPath id="cowClip"><path d="${body}"/></clipPath></defs><g transform="translate(366 ${HORIZON}) scale(.8)">${halo(cow, 6)}</g>`;
+                }
+                case 'armadillo':
+                    // Trundling past the door, snout to the left: banded middle, dotted shields, tapered tail
+                    return `<g transform="translate(194 ${HORIZON}) scale(1.3)">`
+                        + `<path d="M13 -4 Q22 -3 29 1 Q21 0 13 -1 Z" ${W} ${thin(1.3)}/><path d="M-9 -1 V1.5 M-4 -1 V1.5 M5 -1 V1.5 M10 -1 V1.5" stroke-width="2.2"/>`
+                        + `<path d="M-15 0 Q-15 -14 0 -14 Q15 -14 15 0 Z" ${W} stroke-width="2"/>`
+                        + `<path d="M-5 -13.2 Q-6 -6 -5.5 0 M-1.5 -13.9 V0 M2 -13.9 V0 M5.5 -13.2 Q6.5 -6 6 0" ${thin(1)}/>`
+                        + `<g ${BLK} stroke="none">${[[-10, -8], [-12, -3.5], [-8, -4], [-8.5, -10], [10, -8], [12, -3.5], [8.5, -4], [9, -10]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r=".8"/>`).join('')}</g>`
+                        + `<path d="M-16 -9 L-17 -15 L-13 -10" ${W} ${thin(1.2)}/>`
+                        + `<path d="M-13 -9 Q-17 -9 -27 -2 Q-27 0 -25 0 H-13 Z" ${W} stroke-width="1.6"/><circle cx="-18" cy="-5" r=".8" ${BLK}/></g>`;
                 default:
                     return '';
             }
+        }
+
+        // ---------- Holiday + new egg drawings ----------
+
+        // US flag on a yard pole right of the house (behind the tree); half = half-staff
+        function usFlag(half) {
+            const px = 342, H = 32 / 13;
+            const shape = 'M0 0 Q12.5 -4 25 0 T50 0 V32 Q37.5 36 25 32 T0 32 Z';
+            const wave = (y) => `M0 ${f(y)} Q12.5 ${f(y - 4)} 25 ${f(y)} T50 ${f(y)}`;
+            let red = '', stars = '';
+            for (let i = 0; i < 13; i += 2) red += wave(H * (i + 0.5)) + ' ';
+            for (let i = 0; i < 4; i++) for (let j = 0; j < 5; j++) {
+                const x = 2.4 + j * 3.9 + (i % 2) * 1.3, y = 2.4 + i * 4.1 - 8 * (x / 25) * (1 - x / 25);
+                stars += `<circle cx="${f(x)}" cy="${f(y)}" r="0.9"/>`;
+            }
+            return `<defs><clipPath id="flagClip"><path d="${shape}"/></clipPath><clipPath id="cantonClip"><rect x="0" y="-6" width="21" height="40"/></clipPath></defs>`
+                + halo(`<path d="M${px} ${HORIZON} V88"/>`, 6) + `<circle cx="${px}" cy="86" r="3" ${W} ${thin(1.6)}/>`
+                + `<g transform="translate(${px} ${half ? 138 : 96})"><path d="${shape}" ${W} stroke="#fff" stroke-width="5"/>`
+                + `<g clip-path="url(#flagClip)"><path d="${red}" stroke-width="${f(H)}" stroke-linecap="butt"/>`
+                + `<g clip-path="url(#cantonClip)"><path d="${wave(8.6)}" stroke-width="17.6" stroke-linecap="butt"/></g>`
+                + `<g fill="#fff" stroke="none">${stars}</g></g><path d="${shape}" ${thin(1.6)}/></g>`;
+        }
+
+        // Black with a white edge on day skies, solid white at night (lit)
+        const bat = (x, y, s, lit) => `<path transform="translate(${f(x)} ${f(y)}) scale(${f(s)})" d="M0 -2 L-1.5 -4 L-1 -1 Q-4 -4 -8 -3 Q-11 -4 -13 -1 Q-10 -1 -9 2 Q-7 0 -5 2 Q-3 0 0 3 Q3 0 5 2 Q7 0 9 2 Q10 -1 13 -1 Q11 -4 8 -3 Q4 -4 1 -1 L1.5 -4 Z" ${lit ? 'fill="#fff" stroke="none"' : `${BLK} stroke="#fff" stroke-width="${f(0.8 / s)}"`}/>`;
+        const heart = (x, y, s) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 6 C-8 0 -10 -6 -5 -9 C-2 -11 0 -9 0 -7 C0 -9 2 -11 5 -9 C10 -6 8 0 0 6 Z" ${BLK} stroke="#fff" stroke-width="${f(1.5 / s)}"/>`;
+
+        // Decorated eggs hidden in the grass
+        function easterEggs() {
+            const deco = [
+                `<path d="M-5 0 l2 -2.5 l2 2.5 l2 -2.5 l2 2.5 l2 -2.5" ${thin(1.3)}/>`,
+                `<path d="M-4.4 -3 H4.4 M-4.4 3 H4.4" stroke-width="2"/>`,
+                `<g ${BLK} stroke="none"><circle cx="0" cy="-3.5" r="1.1"/><circle cx="-2.4" cy="0.5" r="1.1"/><circle cx="2.4" cy="0.5" r="1.1"/><circle cx="0" cy="4" r="1.1"/></g>`,
+                `<path d="M-5 0 H5" stroke="#fff" stroke-width="2"/>`
+            ];
+            return [[178, 284, -15, 0], [198, 294, 12, 2], [218, 286, -8, 1], [24, 286, 10, 3], [48, 293, -12, 0], [348, 288, 8, 1], [372, 296, -10, 2], [386, 280, 6, 3]]
+                .map(([x, y, a, k]) => `<g transform="translate(${x} ${y}) rotate(${a})"><ellipse rx="5.2" ry="6.8" ${k === 3 ? BLK : W} ${thin(1.6)}/>${deco[k]}</g>`).join('');
+        }
+
+        // Groundhog Day: out of his hole, with a shadow if the sun is out
+        function groundhog(w) {
+            let s = w.sunVisible ? `<path d="M205 277 Q220 274 234 278 Q220 282 205 280 Z" ${BLK} stroke="none"/>` : '';
+            s += `<ellipse cx="186" cy="277" rx="15" ry="4.5" ${BLK}/>`;
+            return s + `<g transform="translate(186 276)">`
+                + `<circle cx="-6" cy="-26" r="2.8" ${W} ${thin(1.4)}/><circle cx="6" cy="-26" r="2.8" ${W} ${thin(1.4)}/>`
+                + `<path d="M-10 0 Q-12 -17 -7 -25 Q0 -32 7 -25 Q12 -17 10 0 Z" ${W} stroke-width="2"/>`
+                + `<circle cx="-3.2" cy="-21" r="1.3" ${BLK}/><circle cx="3.2" cy="-21" r="1.3" ${BLK}/><ellipse cx="0" cy="-17" rx="2" ry="1.4" ${BLK}/>`
+                + `<path d="M-1.4 -15 h2.8 v2.6 h-2.8 Z M0 -15 v2.6" ${W} ${thin(0.9)}/><path d="M-7 -8 q2.5 2 5 0 M2 -8 q2.5 2 5 0" ${thin(1.4)}/></g>`;
+        }
+
+        function turkey() {
+            let t = '';
+            for (let i = 0; i < 9; i++) {
+                t += `<g transform="translate(8 -26) rotate(${-80 + i * 20})"><path d="M0 -6 Q-6 -16 -4 -28 Q0 -33 4 -28 Q6 -16 0 -6 Z" ${W} ${thin(1.8)}/><path d="M-3 -24 Q0 -27 3 -24" stroke-width="2.6"/></g>`;
+            }
+            t += `<path d="M-2 -7 V0 M7 -7 V0 M-6 0 h6 M3 0 h7" stroke-width="2"/>`
+                + `<path d="M-14 -18 Q-14 -34 2 -34 Q18 -34 18 -18 Q18 -6 2 -6 Q-14 -6 -14 -18 Z" ${W} stroke-width="2"/>`
+                + `<path d="M0 -26 q6 4 12 0 M2 -19 q6 4 12 0" ${thin(1.2)}/>`
+                + `<path d="M-8 -24 Q-18 -32 -16 -44 L-10 -44 Q-12 -34 -4 -28 Z" ${W} stroke-width="1.8"/>`
+                + `<circle cx="-14" cy="-47" r="4.5" ${W} stroke-width="1.8"/><path d="M-18 -48 l-5 1.5 l5 1.5 Z" ${W} ${thin(1.2)}/>`
+                + `<path d="M-17.5 -44 q-3 5 0 10" stroke-width="2.6"/><circle cx="-13" cy="-48.5" r="1" ${BLK}/>`;
+            return `<g transform="translate(350 ${HORIZON})">${halo(t, 6)}</g>`;
         }
 
         function fireworks() {
@@ -905,10 +1021,16 @@
 
         // ---------- Compose ----------
 
-        function drawScene(w, egg, now) {
+        // look: optional overrides for previews, e.g. { swim: true, shirt: 'apple' }
+        function drawScene(w, egg, now, look = {}) {
             const r = rng(42);
             const season = seasonal(now);
-            const canopyDy = season.party ? -24 : 0; // lift the umbrella to clear party hats
+            // Outfit rolls, stable for the day: occasional swimsuits on hot days and an occasional print on his tee
+            const lp = localParts(now), roll = rng(hash(`look-${lp.year}-${lp.month}-${lp.day}`)), r1 = roll(), r2 = roll(), r3 = roll();
+            season.swim = look.swim ?? (w.tier === 'tank' && r1 < SWIM_CHANCE);
+            season.shirt = look.shirt ?? (r2 < SHIRT_CHANCE ? SHIRTS[Math.floor(r3 * SHIRTS.length)] : 'plain');
+            // Lift the umbrella to clear tall hats
+            const canopyDy = [hatFor('her', w, season, egg), hatFor('him', w, season, egg)].some(h => h && h !== 'beanie') ? -24 : 0;
             let s = '';
 
             if (w.night) s += `<rect x="0" y="0" width="400" height="${HORIZON}" ${BLK} stroke="none"/>`;
@@ -924,13 +1046,20 @@
             }
             if (['airplane', 'balloon', 'geese', 'kite', 'shootingStar', 'ufo'].includes(egg)) s += eggArt(egg, w);
             s += clouds(w);
+            if (season.flag) s += usFlag(season.flag === 'half');
+            if (season.valentine) s += heart(250, 40, 1.6) + heart(312, 84, 1.1) + heart(172, 28, 1) + heart(124, 104, 0.8) + heart(372, 28, 0.9);
+            if (season.halloween) s += [[140, 34, 1.3], [176, 66, 1], [300, 36, 1.2], [338, 76, 0.9], [252, 24, 0.8]].map(([x, y, k]) => bat(x, y, k, w.night)).join('');
             if (egg === 'blackhawks') s += eggArt(egg, w);
             if (w.thunder && w.rain) s += bolt;
             if (w.windy) s += windLines();
 
             // Farm
-            s += farm(w, r, season);
-            if (['owl', 'catInWindow', 'snowman', 'bigfoot', 'deer', 'rabbit'].includes(egg)) s += eggArt(egg, w);
+            s += farm(w, r, season, egg);
+            if (['owl', 'catInWindow', 'snowman', 'bigfoot', 'deer', 'rabbit', 'cow', 'armadillo'].includes(egg)) s += eggArt(egg, w);
+            if (season.easter) s += easterEggs() + eggArt('rabbit', w);
+            if (season.groundhog) s += groundhog(w);
+            if (season.thanksgiving) s += turkey();
+            if (season.stPatrick) s += [[176, 286, 1], [216, 296, 0.9], [30, 290, 1], [56, 282, 0.8], [350, 290, 1], [380, 284, 0.8]].map(p => shamrock(...p)).join('');
             if (w.fog) s += fogLines();
 
             // Precip (behind us, kept out from under the umbrella)
@@ -941,17 +1070,226 @@
             if (w.snow) s += snowflakes(rng(13));
 
             // Us
-            s += her(w, rng(5), season);
+            s += her(w, rng(5), season, egg);
             s += `<g transform="translate(0 ${HIM_DY})">${him(w, rng(9), egg, season)}</g>`;
             if (w.umbrella) s += `<g transform="translate(0 ${canopyDy})">${umbrellaCanopy()}</g>`;
 
             // Frame
             s += `<rect x="1.5" y="1.5" width="397" height="477" stroke-width="3"/>`;
 
-            const dress = { tank: 'tank tops', tee: 't-shirts', long: 'long sleeves', coat: 'coats and hats' }[w.tier];
+            const dress = season.swim ? 'swimsuits' : { tank: 'tank tops', tee: 't-shirts', long: 'long sleeves', coat: 'coats and hats' }[w.tier];
             const label = `The two of us in ${dress}${w.umbrella ? ' under an umbrella' : ''}${w.sunglasses ? ' and sunglasses' : ''}, ${w.night ? 'at night' : 'by day'}`;
             return `<svg viewBox="0 0 400 480" width="400" height="480" role="img" aria-label="${label}" fill="none" stroke="#000" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">${s}</svg>`;
         }
+
+        return {
+            TZ, asNumber, probPct, localParts, getPeriods, pickPeriod, analyze, pickEgg, f, drawScene,
+            // For scripts/preview-scene.js
+            EGG_NAMES: Object.keys(EGGS), nthWeekday, easter
+        };
+    })();
+</script>
+
+<!-- trmnl:split  (scripts/push-trmnl.py: above -> markup_shared, below -> markup_full) -->
+
+<style>
+    html,
+    body {
+        margin: 0;
+        background: #fff;
+        color: #000;
+    }
+
+    *,
+    *::before,
+    *::after {
+        box-sizing: border-box;
+        -webkit-user-select: none;
+        user-select: none;
+    }
+
+    svg {
+        display: block;
+    }
+
+    .screen {
+        width: 800px;
+        height: 480px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: 400px 1fr;
+        overflow: hidden;
+    }
+
+    .scene {
+        width: 400px;
+        height: 480px;
+        border-right: 2px solid #000;
+    }
+
+    .scene svg {
+        shape-rendering: geometricPrecision;
+    }
+
+    /* Right half: today's numbers + rules-driven highlights */
+    .panel {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        padding: 12px 18px 10px 20px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .panel svg {
+        fill: none;
+        stroke: #000;
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        flex: none;
+    }
+
+    .phead {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        padding-bottom: 6px;
+        border-bottom: 2px solid #000;
+    }
+
+    .phead .date {
+        font-weight: 700;
+        font-size: 24px;
+        white-space: nowrap;
+    }
+
+    .phead .updated {
+        font-size: 12px;
+        white-space: nowrap;
+        flex: none;
+        margin-left: 8px;
+    }
+
+    .stat {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 10px;
+    }
+
+    .stat .ico {
+        width: 48px;
+        height: 52px;
+    }
+
+    .stat .v {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+    }
+
+    .stat .v + .v {
+        margin-left: 10px;
+    }
+
+    .big {
+        font-weight: 800;
+        font-size: 54px;
+        line-height: 1;
+    }
+
+    .mid {
+        font-weight: 500;
+        font-size: 40px;
+        line-height: 1;
+    }
+
+    .amt {
+        font-weight: 700;
+        font-size: 28px;
+        line-height: 1.1;
+    }
+
+    .sunv {
+        font-weight: 700;
+        font-size: 30px;
+        line-height: 1;
+    }
+
+    .sunv small {
+        font-size: 16px;
+        font-weight: 600;
+        margin-left: 2px;
+    }
+
+    .cap {
+        font-size: 13px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        margin-top: 3px;
+    }
+
+    .stat.sun .ico {
+        width: 40px;
+        height: 40px;
+    }
+
+    .heads {
+        margin-top: 12px;
+        border-top: 2px solid #000;
+        padding-top: 6px;
+    }
+
+    .heads h2 {
+        margin: 0 0 4px;
+        font-size: 15px;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+
+    .heads ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+    }
+
+    .heads li {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 20px;
+        line-height: 1.18;
+        margin-top: 6px;
+    }
+
+    .heads li svg {
+        width: 30px;
+        height: 30px;
+        stroke-width: 2.5;
+    }
+
+    .heads li span {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
+</style>
+
+<main class="screen" aria-label="TRMNL fun weather">
+    <section class="scene" id="scene"></section>
+    <section class="panel" id="panel"></section>
+</main>
+
+<script>
+    ; (() => {
+        if (!window.FunWeather) {
+            document.getElementById('scene').innerHTML = '<div style="padding:16px; font:700 24px system-ui">Render error</div><div style="padding:0 16px; font:400 18px system-ui">Shared markup (FunWeather) did not load</div>';
+            return;
+        }
+        const { TZ, asNumber, probPct, localParts, getPeriods, pickPeriod, analyze, pickEgg, f, drawScene } = window.FunWeather;
 
         // ---------- Right panel: numbers ----------
 
@@ -972,7 +1310,6 @@
         const ALERT_SCORE = { Extreme: 130, Severe: 115, Moderate: 85, Minor: 60 };
 
         const deg = (n) => isFinite(n) ? Math.round(n) + '\u00B0' : '--\u00B0';
-        const getPeriods = (forecast) => forecast?.periods || forecast?.properties?.periods || [];
 
         // Whole local days between now and date (0 = today)
         function dayOffset(date, now) {
@@ -1265,16 +1602,14 @@
             const lo = loP ? periodInfo(loP).temp : (w.night ? w.temp : NaN);
             const info = periodInfo(period);
 
-            const hiCap = hiP ? `High ${whenName(hiP, now)}` : 'High';
-            const loCap = loP ? `Low ${whenName(loP, now)}` : 'Low';
             const amount = info.amount
                 ? `<div class="v"><span class="amt">${info.amount.text}</span><span class="cap">${info.amount.kind}</span></div>`
-                : info.pop < 20 ? `<div class="v"><span class="amt">Dry</span><span class="cap">&nbsp;</span></div>` : '';
+                : info.pop < 20 ? `<div class="v"><span class="amt">Dry</span></div>` : '';
 
             const sun = sunTimes(asNumber(location?.latitude ?? location?.lat), asNumber(location?.longitude ?? location?.lon ?? location?.lng), now);
             const sunRow = sun ? `<div class="stat sun">
-                    <span class="ico">${ICONS.sun(true)}</span><div class="v"><span class="sunv">${clock(sun.rise)}</span><span class="cap">Sunrise</span></div>
-                    <span class="ico" style="margin-left:14px">${ICONS.sun(false)}</span><div class="v"><span class="sunv">${clock(sun.set)}</span><span class="cap">Sunset</span></div>
+                    <span class="ico">${ICONS.sun(true)}</span><div class="v"><span class="sunv">${clock(sun.rise)}</span></div>
+                    <span class="ico" style="margin-left:14px">${ICONS.sun(false)}</span><div class="v"><span class="sunv">${clock(sun.set)}</span></div>
                 </div>` : '';
 
             let hl = [];
@@ -1283,17 +1618,17 @@
             const ts = current?.timestamp ? new Date(current.timestamp) : now;
             document.getElementById('panel').innerHTML = `
                 <div class="phead">
-                    <span class="date">${now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'long', month: 'short', day: 'numeric' })}</span>
+                    <span class="date">${now.toLocaleDateString('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' })}</span>
                     <span class="updated">Updated ${ts.toLocaleTimeString('en-US', { timeZone: TZ, hour: 'numeric', minute: '2-digit' })}</span>
                 </div>
                 <div class="stat">
                     <span class="ico">${ICONS.thermo}</span>
-                    <div class="v"><span class="big">${deg(hi)}</span><span class="cap">${hiCap}</span></div>
-                    <div class="v"><span class="mid">${deg(lo)}</span><span class="cap">${loCap}</span></div>
+                    <div class="v"><span class="big">${deg(hi)}</span></div>
+                    <div class="v"><span class="mid">${deg(lo)}</span></div>
                 </div>
                 <div class="stat">
                     <span class="ico">${ICONS.drop(info.pop)}</span>
-                    <div class="v"><span class="big">${info.pop}%</span><span class="cap">Chance ${w.night ? 'tonight' : 'today'}</span></div>
+                    <div class="v"><span class="big">${info.pop}%</span></div>
                     ${amount}
                 </div>
                 ${sunRow}
