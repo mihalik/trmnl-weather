@@ -1131,7 +1131,7 @@
         shape-rendering: geometricPrecision;
     }
 
-    /* Right half: today's numbers + rules-driven highlights */
+    /* Right half: now, a 6-day trend chart, and rules-driven highlights */
     .panel {
         display: flex;
         flex-direction: column;
@@ -1188,65 +1188,87 @@
         min-width: 0;
     }
 
-    .stat .v + .v {
-        margin-left: 10px;
-    }
-
     .big {
         font-weight: 800;
         font-size: 54px;
         line-height: 1;
     }
 
-    .mid {
-        font-weight: 500;
-        font-size: 40px;
-        line-height: 1;
+    /* Rain chance + total, and the next sunset/sunrise, stacked to the right of the now temp */
+    .minis {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-left: auto;
     }
 
-    .amt {
+    .mini {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 24px;
         font-weight: 700;
-        font-size: 28px;
-        line-height: 1.1;
-    }
-
-    .sunv {
-        font-weight: 700;
-        font-size: 30px;
         line-height: 1;
+        white-space: nowrap;
     }
 
-    .sunv small {
-        font-size: 16px;
-        font-weight: 600;
+    .mini small {
+        font-size: 15px;
         margin-left: 2px;
     }
 
-    .cap {
-        font-size: 13px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.06em;
-        margin-top: 3px;
+    .panel .mini svg {
+        width: 26px;
+        height: 26px;
+        stroke-width: 2.5;
     }
 
-    .stat.sun .ico {
-        width: 40px;
-        height: 40px;
+    /* 6-day trend: day names, icons, rain chances, high and low lines */
+    .chart {
+        margin-top: 8px;
+        border-top: 2px solid #000;
+    }
+
+    .panel .chart svg {
+        stroke-width: 2.5;
+    }
+
+    .chart text {
+        fill: #000;
+        stroke: none;
+        text-anchor: middle;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .chart .dn {
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.05em;
+    }
+
+    .chart .dn.on {
+        fill: #fff;
+    }
+
+    .chart .th {
+        font-size: 24px;
+        font-weight: 800;
+    }
+
+    .chart .tl {
+        font-size: 19px;
+        font-weight: 500;
+    }
+
+    .chart .pp {
+        font-size: 14px;
+        font-weight: 700;
     }
 
     .heads {
-        margin-top: 12px;
+        margin-top: 4px;
         border-top: 2px solid #000;
         padding-top: 6px;
-    }
-
-    .heads h2 {
-        margin: 0 0 4px;
-        font-size: 15px;
-        font-weight: 800;
-        text-transform: uppercase;
-        letter-spacing: 0.08em;
     }
 
     .heads ul {
@@ -1259,14 +1281,14 @@
         display: flex;
         align-items: center;
         gap: 10px;
-        font-size: 20px;
+        font-size: 18px;
         line-height: 1.18;
-        margin-top: 6px;
+        margin-top: 5px;
     }
 
     .heads li svg {
-        width: 30px;
-        height: 30px;
+        width: 26px;
+        height: 26px;
         stroke-width: 2.5;
     }
 
@@ -1593,27 +1615,112 @@
             return items.sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.t - b.t || b.score - a.score);
         }
 
+        // ---------- Week: per-day summary + day icons ----------
+
+        // Day icons on a 32 grid. The cloud is filled white so it masks the sun behind it.
+        const CLOUD = `<path d="M9 25 H24 A5 5 0 0 0 24.5 15 A8 8 0 0 0 9.2 13.8 A5.6 5.6 0 0 0 9 25 Z" fill="#fff"/>`;
+        const UP = (s) => `<g transform="translate(0 -4)">${s}</g>`;
+        const WX = {
+            sunny: `<circle cx="16" cy="16" r="7"/><path d="M16 1.5 V5.5 M16 26.5 V30.5 M1.5 16 H5.5 M26.5 16 H30.5 M5.7 5.7 l2.8 2.8 M23.5 23.5 l2.8 2.8 M26.3 5.7 L23.5 8.5 M8.5 23.5 l-2.8 2.8"/>`,
+            moon: `<path d="M19 4 a12 12 0 1 0 9 17 a10 10 0 0 1 -9 -17 Z"/>`,
+            partly: `<circle cx="12" cy="11" r="5"/><path d="M12 2 V3.5 M3 11 H4.5 M5.6 4.6 l1.1 1.1 M18.4 4.6 l-1.1 1.1"/><g transform="translate(2 3)">${CLOUD}</g>`,
+            cloud: CLOUD,
+            rain: UP(CLOUD) + `<path d="M11 25 l-2 5 M17 25 l-2 5 M23 25 l-2 5"/>`,
+            storm: UP(CLOUD) + `<path d="M17 19 L12.5 26 H16.5 L14 31.5 L21 24 H17 L19.5 19 Z" fill="#000" stroke-width="1.5"/>`,
+            snow: UP(CLOUD) + `<path d="M10 25.5 v4 M8 27.5 h4 M16 27 v4 M14 29 h4 M22 25.5 v4 M20 27.5 h4" stroke-width="2"/>`,
+            fog: UP(CLOUD) + `<path d="M6 26 H24 M10 30 H28"/>`
+        };
+
+        function wxKind(p) {
+            const w = analyze(p);
+            if (w.snow) return 'snow';
+            if (w.rain) return w.thunder ? 'storm' : 'rain';
+            if (w.fog) return 'fog';
+            if (w.sky === 'clear' || w.sky === 'mostly') return w.night ? 'moon' : 'sunny';
+            return w.sky === 'partly' ? (w.night ? 'cloud' : 'partly') : 'cloud';
+        }
+
+        // One entry per local day: { off, start, name, hi, lo, pop, icon }.
+        // A night period counts toward the day it starts (NWS "Overnight" from midnight goes to the day before).
+        function week(periods, now) {
+            const byOff = new Map();
+            for (const p of periods) {
+                if (new Date(p.endTime) <= now) continue;
+                const start = new Date(p.startTime), night = p.isDaytime === false;
+                const off = Math.max(0, dayOffset(new Date(+start - (night ? 6 * 36e5 : 0)), now));
+                if (!byOff.has(off)) byOff.set(off, { off, start, hi: NaN, lo: NaN, pop: 0 });
+                const d = byOff.get(off), x = periodInfo(p);
+                if (night) d.lo = x.temp; else { d.hi = x.temp; d.dayP = p; }
+                d.nightP = night ? p : d.nightP;
+                d.pop = Math.max(d.pop, x.pop);
+            }
+            return [...byOff.values()].sort((a, b) => a.off - b.off).map(d => {
+                const p = d.dayP || d.nightP;
+                const dow = d.start.toLocaleDateString('en-US', { weekday: 'short', timeZone: TZ });
+                return { ...d, name: dow, icon: wxKind(p) };
+            });
+        }
+
+        // Current temperature in F from the observation (NaN if missing)
+        function nowTempF(current) {
+            const t = current?.temperature, v = asNumber(t?.value ?? t);
+            return /degC/i.test(t?.unitCode || '') ? v * 9 / 5 + 32 : v;
+        }
+
         // ---------- Right panel: render ----------
 
+        // Highs (thick line, solid dots, labels above) and lows (thin dashed line, open dots, labels below)
+        // for up to 6 days on one scale, with day names, icons, and rain chances in columns.
+        function trendChart(days, width) {
+            // Inset the columns so labels in the outer ones (e.g. "58°" in a wider device font) don't clip
+            const inset = 8, n = days.length, col = (width - 2 * inset) / n, cx = (i) => inset + col * i + col / 2;
+            const top = 126, bot = 226;   // y range for the data points
+            const temps = days.flatMap(d => [d.hi, d.lo]).filter(isFinite);
+            const min = Math.min(...temps), max = Math.max(...temps), span = Math.max(1, max - min);
+            const y = (t) => bot - (bot - top) * (t - min) / span;
+            const line = (key) => days.map((d, i) => isFinite(d[key]) ? `${f(cx(i))},${f(y(d[key]))}` : null)
+                .filter(Boolean).map((p, i) => (i ? 'L' : 'M') + p).join(' ');
+
+            let s = '';
+            days.forEach((d, i) => {
+                const x = cx(i);
+                if (d.off === 0) s += `<rect x="${f(x - 30)}" y="6" width="60" height="22" rx="11" fill="#000" stroke="none"/>`;
+                s += `<text class="dn${d.off === 0 ? ' on' : ''}" x="${f(x)}" y="22">${d.name.toUpperCase()}</text>`;
+                s += `<svg x="${f(x - 20)}" y="30" width="40" height="40" viewBox="0 0 32 32">${WX[d.icon] || WX.cloud}</svg>`;
+                if (d.pop >= 20) s += `<text class="pp" x="${f(x)}" y="90">${d.pop}%</text>`;
+            });
+            s += `<path d="${line('hi')}" stroke-width="4"/>`;
+            s += `<path d="${line('lo')}" stroke-width="2" stroke-dasharray="5 5"/>`;
+            days.forEach((d, i) => {
+                const x = cx(i);
+                if (isFinite(d.hi)) s += `<circle cx="${f(x)}" cy="${f(y(d.hi))}" r="5" fill="#000"/><text class="th" x="${f(x)}" y="${f(y(d.hi) - 11)}">${deg(d.hi)}</text>`;
+                if (isFinite(d.lo)) s += `<circle cx="${f(x)}" cy="${f(y(d.lo))}" r="4.5" fill="#fff" stroke-width="2.5"/><text class="tl" x="${f(x)}" y="${f(y(d.lo) + 24)}">${deg(d.lo)}</text>`;
+            });
+            return `<svg viewBox="0 0 ${width} 256" width="${width}" height="256" role="img" aria-label="Highs and lows for the next ${n} days">${s}</svg>`;
+        }
+
         function renderPanel(period, w, periods, now, current, location, alerts) {
-            const up = periods.filter(p => new Date(p.endTime) > now);
-            const hiP = up.find(p => p.isDaytime !== false), loP = up.find(p => p.isDaytime === false);
-            const hi = hiP ? periodInfo(hiP).temp : (w.night ? NaN : w.temp);
-            const lo = loP ? periodInfo(loP).temp : (w.night ? w.temp : NaN);
             const info = periodInfo(period);
+            const days = week(periods, now).slice(0, 6);
 
-            const amount = info.amount
-                ? `<div class="v"><span class="amt">${info.amount.text}</span><span class="cap">${info.amount.kind}</span></div>`
-                : info.pop < 20 ? `<div class="v"><span class="amt">Dry</span></div>` : '';
+            // Now: observed temperature, falling back to the current forecast period
+            const nowT = isFinite(nowTempF(current)) ? nowTempF(current) : w.temp;
 
-            const sun = sunTimes(asNumber(location?.latitude ?? location?.lat), asNumber(location?.longitude ?? location?.lon ?? location?.lng), now);
-            const sunRow = sun ? `<div class="stat sun">
-                    <span class="ico">${ICONS.sun(true)}</span><div class="v"><span class="sunv">${clock(sun.rise)}</span></div>
-                    <span class="ico" style="margin-left:14px">${ICONS.sun(false)}</span><div class="v"><span class="sunv">${clock(sun.set)}</span></div>
-                </div>` : '';
+            // Rain chance + expected total for the current period
+            const total = info.amount ? `${info.amount.text}${info.amount.kind === 'Rain' ? '' : ' ' + info.amount.kind.toLowerCase()}` : info.pop < 20 ? 'Dry' : '';
+            const rain = `${info.pop}%${total ? ` &middot; ${total}` : ''}`;
+
+            // By day the next sunset; at night the next sunrise
+            const lat = asNumber(location?.latitude ?? location?.lat), lon = asNumber(location?.longitude ?? location?.lon ?? location?.lng);
+            let sun = sunTimes(lat, lon, now), sunRow = '';
+            if (sun) {
+                const day = now >= sun.rise && now < sun.set;
+                if (!day && now >= sun.set) sun = sunTimes(lat, lon, new Date(+now + 864e5)) || sun;
+                sunRow = `<div class="mini">${ICONS.sun(!day)}<span>${clock(day ? sun.set : sun.rise)}</span></div>`;
+            }
 
             let hl = [];
-            try { hl = highlights(periods, now, alerts); } catch (e) { hl = []; }
+            try { hl = highlights(periods, now, alerts).slice(0, 2); } catch (e) { hl = []; }
 
             const ts = current?.timestamp ? new Date(current.timestamp) : now;
             document.getElementById('panel').innerHTML = `
@@ -1623,17 +1730,14 @@
                 </div>
                 <div class="stat">
                     <span class="ico">${ICONS.thermo}</span>
-                    <div class="v"><span class="big">${deg(hi)}</span></div>
-                    <div class="v"><span class="mid">${deg(lo)}</span></div>
+                    <div class="v"><span class="big">${deg(nowT)}</span></div>
+                    <div class="minis">
+                        <div class="mini">${ICONS.drop(info.pop)}<span>${rain}</span></div>
+                        ${sunRow}
+                    </div>
                 </div>
-                <div class="stat">
-                    <span class="ico">${ICONS.drop(info.pop)}</span>
-                    <div class="v"><span class="big">${info.pop}%</span></div>
-                    ${amount}
-                </div>
-                ${sunRow}
+                ${days.length ? `<div class="chart">${trendChart(days, 360)}</div>` : ''}
                 <section class="heads">
-                    <h2>Heads Up</h2>
                     <ul>${hl.map(h => `<li>${hlIcon(h.icon)}<span>${h.text}</span></li>`).join('')}</ul>
                 </section>`;
         }
