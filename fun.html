@@ -67,7 +67,9 @@
             };
         }
 
-        function analyze(p) {
+        // opts.night: real day/night from sunrise/sunset at render time; defaults to the NWS period's isDaytime,
+        // whose 6am/6pm boundaries can be hours off from the actual sky.
+        function analyze(p, opts = {}) {
             const short = String(p.shortForecast || '').toLowerCase();
             const detail = String(p.detailedForecast || '').toLowerCase();
             const first = short.split(' then ')[0];
@@ -76,7 +78,7 @@
             const pop = probPct(p.probabilityOfPrecipitation?.value);
             const mph = Math.max(0, ...(String(p.windSpeed || '').match(/\d+/g) || []).map(Number));
 
-            const night = p.isDaytime === false;
+            const night = opts.night ?? p.isDaytime === false;
             const thunder = /thunder|t-storm|tstorm/.test(short);
             const snowWords = /snow|sleet|flurr|blizzard|freezing|ice/.test(short);
             const wetWords = snowWords || /rain|shower|drizzle|thunder|storm/.test(short);
@@ -1698,7 +1700,7 @@
 
         // Sunrise/sunset from lat/lon (NOAA sunrise equation, ~1 minute accuracy)
         function sunTimes(lat, lon, now) {
-            if (!isFinite(lat) || !isFinite(lon)) return null;
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
             const { year, month, day } = localParts(now), rad = Math.PI / 180;
             const n = Date.UTC(year, month - 1, day, 12) / 864e5 + 2440587.5 - 2451545;
             const Js = n - lon / 360;
@@ -2055,7 +2057,10 @@
                 const pv = window.FUN_PREVIEW || {};
                 const now = pv.now ? new Date(pv.now) : new Date();
                 const period = pickPeriod(forecast, now);
-                const w = Object.assign(analyze(period), pv.w || {});
+                // Night = before sunrise or after sunset right now (falls back to the period's isDaytime without a location)
+                const sun = sunTimes(asNumber(location?.latitude ?? location?.lat), asNumber(location?.longitude ?? location?.lon ?? location?.lng), now);
+                const night = sun ? now < sun.rise || now >= sun.set : undefined;
+                const w = Object.assign(analyze(period, { night }), pv.w || {});
                 const egg = 'egg' in pv ? pv.egg : pickEgg(w, now);
                 document.getElementById('scene').innerHTML = drawScene(w, egg, now, pv.look);
                 renderPanel(period, w, getPeriods(forecast), now, current, location, alerts);
