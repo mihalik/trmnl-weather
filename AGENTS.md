@@ -55,12 +55,15 @@ This document defines how AI agents (and humans following the same rules) should
 ## Deploying to TRMNL (`fun.html`)
 - Push with `python3 scripts/push-trmnl.py` (defaults to `fun.html`). It reads the plugin MCP URL + key from the gitignored `.mcp.json`; never print or commit the key.
 - TRMNL's MCP endpoint rejects requests over ~64 KB, so `fun.html` is split at its `<!-- trmnl:split -->` line:
-  - Above the marker → `markup_shared` (TRMNL prepends it to every layout): the scene-drawing script only, wrapped in an IIFE that exposes helpers as `window.FunWeather`. No CSS, DOM, or top-level side effects here.
-  - Below the marker → `markup_full`: `<style>`, `<main>`, and the panel script, which starts with `const { ... } = window.FunWeather;` and a guard that shows a render error if Shared didn't load.
-- Adding code: drawing/scene code goes above the marker, panel/forecast code below. If code below needs a helper from above, add its name to **both** the shared `return { ... }` line and the panel's destructuring line.
+  - Above the marker → `markup_shared` (TRMNL prepends it to every layout): core scene-drawing + weather analysis script, wrapped in an IIFE that exposes helpers as `window.FunWeather` (including `svg` primitives and `addExtras`). No CSS, DOM, or top-level side effects here.
+  - Below the marker → `markup_full`: `<script id="scene-extras">` (registers easter-egg, holiday, and alternate-house drawings via `window.FunWeather.addExtras(...)` to keep both slots balanced well under 64 KB), `<style>`, `<main>`, and the panel script, which starts with `const { ... } = window.FunWeather;` and a guard that shows a render error if Shared didn't load.
+- Adding code: core scene/person code goes above the marker; new easter-egg, holiday, or alternate-house drawings go in `<script id="scene-extras">` below the marker (and panel/forecast code goes in the panel script below). If code below needs a helper from above, add its name to **both** the shared `return { ... }` line (or `svg`) and the destructuring line below.
 - Keep exactly one marker. Don't start a line with `//` inside a template literal (full-line `//` comments are stripped on push, along with indentation and blank lines).
 - The script prints each slot's size against the limit and uploads nothing if either is over. Fix that by moving code across the marker, not by bypassing the check.
-- Before pushing scene/art changes, preview them offline with `node scripts/preview-scene.js` (`--eggs`, `--holidays`, `--crop` for close-ups; specs like `name='{"now":...,"egg":...,"look":{"swim":true}}'`). It writes `/tmp/fun-preview/sheet.png`; read it to check the art. New eggs go in `EGGS` and show up in `--eggs` automatically.
+- Before pushing scene/panel changes, preview them offline with `node scripts/preview-scene.js`:
+  - Scene-only sheets: `--eggs`, `--holidays`, `--crop` for close-ups; specs like `name='{"now":...,"egg":...,"look":{"swim":true}}'`.
+  - Full 800×480 display (scene + right panel): `--full` or `--full --states` (renders exact 800×480 PNGs + labeled contact sheet at `/tmp/fun-preview/sheet.png` via macOS WebKit).
+  - Read `/tmp/fun-preview/sheet.png` to check the art and layout. New eggs go in `EGGS` (and `eggArt` in `#scene-extras`) and show up in `--eggs` automatically.
 - Validate after pushing: take a screenshot of `markup_full` on `og_plus` with the TRMNL MCP `MarkupsScreenshotTool` and confirm there's no "Render error".
 
 ## Review Checklist (before ending a task)

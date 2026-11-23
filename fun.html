@@ -18,7 +18,7 @@
         const LONG_AT = 45;   // >= long sleeves, below = coats + hats
         const SCARF_BELOW = 32;
         const WINDY_MPH = 15;
-        const EGG_CHANCE = 0.1; // per hour; the pick is stable within the hour
+        const EGG_CHANCE = 0.25; // per hour; the pick is stable within the hour
 
         const asNumber = (v) => (typeof v === 'number' ? v : v == null ? null : parseFloat(String(v)));
         const probPct = (v) => {
@@ -84,15 +84,16 @@
             const snow = wet && snowWords && !(temp > 36 && /rain/.test(short));
             const rain = wet && !snow;
 
+            const fog = /fog|haze|smoke|mist/.test(short);
             let sky;
             if (wet) sky = 'overcast';
             else if (/partly/.test(first)) sky = 'partly';
             else if (/mostly cloudy|overcast/.test(first) || (/cloudy/.test(first) && !/partly/.test(first))) sky = 'cloudy';
             else if (/mostly (sunny|clear)/.test(first)) sky = 'mostly';
             else if (/sunny|clear|fair|hot/.test(first)) sky = 'clear';
+            else if (fog) sky = 'fog';
             else sky = 'partly';
 
-            const fog = /fog|haze|smoke|mist/.test(short);
             const windy = mph >= WINDY_MPH || /breezy|windy|gust|blustery/.test(short + ' ' + detail);
             const sunVisible = !night && ['clear', 'mostly', 'partly'].includes(sky) && !fog;
             const tier = !isFinite(temp) ? 'tee' : temp >= TANK_AT ? 'tank' : temp >= TEE_AT ? 'tee' : temp >= LONG_AT ? 'long' : 'coat';
@@ -118,12 +119,11 @@
             airplane: w => !w.night && !w.thunder,
             balloon: (w, s) => !w.night && !w.windy && !w.rain && !w.snow && !s.flag,
             geese: w => !w.night && !w.rain,
-            birdOnHead: w => !w.night && !w.rain && !w.snow && w.tier !== 'coat',
+            birdOnHead: (w, s) => !w.night && !w.rain && !w.snow && w.tier !== 'coat' && !s.party && !s.santa && !s.stPatrick,
             kite: (w, s) => !w.night && w.windy && !w.rain && !s.flag,
-            rainbow: w => !w.night && w.rain,
+            rainbow: w => !w.night && !w.snow && (w.rain || (w.pop != null && w.pop >= 20)),
             snowman: w => w.snow,
             catInWindow: (w, s) => !w.umbrella && !s.halloween,
-            bigfoot: (w, s) => !s.thanksgiving,
             deer: (w, s) => !w.rain && !s.thanksgiving,
             rabbit: (w, s) => !w.rain && !w.snow && !s.easter,
             blackhawks: w => !w.thunder,
@@ -131,11 +131,11 @@
             cowboyHats: w => true,
             castle: w => true,
             alamo: w => true,
-            armadillo: w => !w.snow
+            armadillo: w => w.night && !w.snow
         };
 
-        // Relative odds among eligible eggs (default 1): house swaps are extra rare
-        const EGG_WEIGHT = { castle: 0.2, alamo: 0.2 };
+        // Relative odds among eligible eggs (default 1): sillier / big-swap eggs are rarer
+        const EGG_WEIGHT = { castle: 0.15, alamo: 0.15, ufo: 0.2, blackhawks: 0.25, cowboyHats: 0.3 };
 
         function pickEgg(w, now) {
             const lp = localParts(now);
@@ -172,6 +172,7 @@
                 || on(9, nthWeekday(year, 9, 1, 1)) || on(9, 11) || on(11, 11);
             const [em, ed] = easter(year);
             return {
+                cal: month >= 3 && month <= 5 ? 'spring' : month >= 6 && month <= 8 ? 'summer' : month >= 9 && month <= 11 ? 'autumn' : 'winter',
                 pumpkin: month === 10 && day >= 15,
                 halloween: on(10, 31),
                 thanksgiving: on(11, nthWeekday(year, 11, 4, 4)),
@@ -337,71 +338,157 @@
             return (sets[w.sky] || []).map(c => cloud(...c)).join('');
         }
 
-        function windLines() {
+        // Solid white with black halo on dark night sky (reads cleanly on both black sky and white house/clouds)
+        const nightStroke = (inner, w = 4.6) => `<g stroke="#000" stroke-width="${w}">${inner}</g><g stroke="#fff">${inner}</g>`;
+
+        function windLines(w, season, egg) {
+            const skipRight = egg === 'kite' || !!season.flag;
             const lines = [
-                'M262 128 H350 A10 10 0 1 0 340 118',
-                'M18 146 H92 A9 9 0 1 1 83 155',
-                'M300 158 H386',
-                'M24 172 H70'
+                'M12 142 Q46 138 86 142 A8 8 0 1 1 78 150',
+                'M20 166 Q48 163 78 166',
+                'M72 114 Q100 110 128 114 A6 6 0 1 0 122 108',
+                ...(skipRight
+                    ? ['M84 128 Q114 125 144 128 A7 7 0 1 0 137 121']
+                    : ['M260 124 Q306 119 354 124 A9 9 0 1 0 345 115', 'M292 152 Q338 148 386 152', 'M274 174 Q306 171 334 174 A6 6 0 1 1 328 180'])
             ].map(d => `<path d="${d}"/>`).join('');
-            const leaf = (x, y, a) => `<g transform="translate(${x} ${y}) rotate(${a})"><path d="M0 0 Q8 -7 16 0 Q8 7 0 0 Z M0 0 H18" ${W}/></g>`;
-            return halo(`<g stroke-width="2.5">${lines}</g>`) + leaf(366, 132, -20) + leaf(108, 168, 25);
+            const leaf = (x, y, a, k = 1) => `<g transform="translate(${x} ${y}) rotate(${a}) scale(${k})"><path d="M0 0 Q7 -6 14 0 Q7 6 0 0 Z M0 0 H15.5" ${W} ${thin(1.4 / k)}/></g>`;
+            const inner = `<g stroke-width="1.6">${lines}</g>`;
+            const leaves = leaf(104, 158, 22, 0.9) + leaf(52, 128, -16, 0.75) + leaf(66, 154, 34, 0.7)
+                + (skipRight ? leaf(96, 104, -24, 0.8) : leaf(366, 126, -18, 0.95) + leaf(316, 144, 28, 0.78) + leaf(376, 166, -32, 0.72));
+            return (w.night ? nightStroke(inner, 4.2) : halo(inner, 4.4)) + leaves;
         }
 
-        function rainLines(r) {
-            let d = '';
+        function rainLines(r, night) {
+            let skyD = '', gndD = '';
             for (let y = 6; y < 300; y += 24) {
                 for (let x = (y / 24 % 2) * 12; x < 410; x += 24) {
                     const jx = x + r() * 8, jy = y + r() * 8;
-                    d += `M${f(jx)} ${f(jy)} l-5 13 `;
+                    const seg = `M${f(jx)} ${f(jy)} l-5 13 `;
+                    if (jy < HORIZON - 10) skyD += seg; else gndD += seg;
                 }
             }
-            return halo(`<path d="${d}" stroke-width="2"/>`, 5);
+            if (!night) return halo(`<path d="${skyD + gndD}" stroke-width="2"/>`, 5);
+            return nightStroke(`<path d="${skyD}" stroke-width="2"/>`, 4.6) + halo(`<path d="${gndD}" stroke-width="2"/>`, 5);
         }
 
-        function snowflakes(r) {
+        function snowflakes(r, night) {
             let out = '';
             for (let i = 0; i < 34; i++) {
                 const x = 6 + r() * 388, y = 6 + r() * 290, s = 3 + r() * 2.5;
                 out += `<path d="M${f(x - s)} ${f(y)} H${f(x + s)} M${f(x - s * .5)} ${f(y - s * .87)} L${f(x + s * .5)} ${f(y + s * .87)} M${f(x - s * .5)} ${f(y + s * .87)} L${f(x + s * .5)} ${f(y - s * .87)}"/>`;
             }
-            return halo(`<g stroke-width="1.8">${out}</g>`, 5);
+            const inner = `<g stroke-width="1.8">${out}</g>`;
+            return night ? nightStroke(inner, 4.6) : halo(inner, 5);
         }
 
+        // Layered low mist banks with soft broken contours so they read as drifting fog, not hills
         function fogLines() {
-            const rows = [[176, 10], [200, 40], [226, 0], [250, 30]];
-            return halo(rows.map(([y, o]) => `<path d="M${-20 + o} ${y} H420" stroke-dasharray="46 14"/>`).join(''), 6);
+            const bank = (d, dash) => `<path d="${d}" ${W} stroke="none"/><path d="${d.replace(/ V\d+ H-?\d+ Z$/, '')}" ${thin(1.8)} stroke-dasharray="${dash}"/>`;
+            const back = 'M-8 214 Q42 198 94 210 Q152 222 210 206 Q266 192 324 208 Q368 218 408 204 V244 H-8 Z';
+            const mid = 'M-8 238 Q56 226 116 238 Q176 250 236 234 Q298 220 356 236 Q384 244 408 234 V268 H-8 Z';
+            const front = 'M-8 258 Q48 250 106 260 Q168 268 232 256 Q296 246 358 258 Q386 262 408 255 V278 H-8 Z';
+            const wisps = halo('<path d="M18 188 Q68 180 116 188 M248 182 Q302 174 366 184" stroke-width="1.6"/>', 5);
+            const mist = '<path d="M24 224 Q64 218 102 224 M156 226 Q200 220 242 226 M294 222 Q342 216 384 222 M52 250 Q98 244 142 250 M260 248 Q312 242 362 248" stroke-width="1.3" stroke-dasharray="22 8 10 8"/>';
+            return wisps + bank(back, '64 12 36 10') + bank(mid, '48 10 72 12') + bank(front, '78 14 42 10') + mist;
         }
 
-        const bolt = `<path d="M232 62 L214 96 L228 96 L218 124 L246 86 L231 86 L242 62 Z" ${BLK} stroke="#fff" stroke-width="2"/>`;
+        // Realistic tapered branching cloud-to-ground lightning striking from the left storm cloud down to the horizon
+        function bolt(night) {
+            // Tapered jagged main bolt polygon: wide exiting the left cloud, narrowing cleanly to the ground
+            const trunk = 'M42 62 L27 90 L38 98 L24 132 L36 142 L31 172 L46 198 L39 214 L54 242 L51 267'
+                + ' L58 242 L44 214 L51 196 L36 171 L43 141 L31 131 L46 97 L35 89 L49 62 Z';
+            const f1 = 'M41 98 L54 110 L50 117 L62 128 M54 110 L64 112';
+            const f2 = 'M26 132 L14 145 L17 152 L7 164';
+            const f3 = 'M48 198 L63 210 L59 217 L69 228';
+            const forks = `<path d="${f1} ${f2}" stroke-width="1.6"/><path d="${f3}" stroke-width="1.2"/>`;
+            if (night) {
+                return `<g stroke="#000" stroke-width="4.4" fill="#000"><path d="${trunk}"/>${forks}</g>`
+                    + `<path d="${trunk}" fill="#fff" stroke="#fff" stroke-width="0.6"/>`
+                    + `<g stroke="#fff">${forks}</g>`;
+            }
+            return `<g stroke="#fff" stroke-width="5.6" fill="#fff"><path d="${trunk}"/>${forks}</g>`
+                + `<path d="${trunk}" ${BLK} stroke="none"/>`
+                + `<g stroke="#000">${forks}</g>`;
+        }
+
+        // Subtle heat-mirage waves rising off the roof on 100°F+ sunny days
+        function heatShimmer() {
+            const wave = (x, y, h) => `M${x} ${y} q-3 ${-h / 3} 0 ${-2 * h / 3} t0 ${-2 * h / 3}`;
+            return `<path d="${wave(144, 128, 22)} ${wave(174, 92, 24)} ${wave(226, 92, 24)} ${wave(258, 128, 22)}" ${thin(1.25)} stroke-dasharray="4 3"/>`;
+        }
 
         // ---------- Background: house, trees ----------
 
         function farm(w, r, season, egg) {
             let s = '';
-            // Ground
-            s += `<path d="M0 ${HORIZON} H400"/>`;
-            const tick = Array.from({ length: 14 }, (_, i) => { const x = 6 + i * 29 + r() * 10; return `M${f(x)} ${HORIZON + 6} l3 -5 l3 5`; }).join(' ');
-            s += `<path d="${tick}" ${thin(1.2)}/>`;
+            const winter = season.cal === 'winter' || w.snow;
+            const spring = season.cal === 'spring' && !w.snow;
+            const autumn = season.cal === 'autumn' && !w.snow;
 
-            // Tall tree + bush (left)
+            // Ground: snow drifts when snowing, seasonal lawn details otherwise
+            if (w.snow) {
+                s += `<path d="M-4 ${HORIZON + 2} Q62 ${HORIZON - 7} 130 ${HORIZON} Q200 ${HORIZON + 5} 274 ${HORIZON - 4} Q340 ${HORIZON - 9} 404 ${HORIZON + 1} V${HORIZON + 16} H-4 Z" ${W} stroke="none"/>`;
+                s += `<path d="M-4 ${HORIZON + 2} Q62 ${HORIZON - 7} 130 ${HORIZON} Q200 ${HORIZON + 5} 274 ${HORIZON - 4} Q340 ${HORIZON - 9} 404 ${HORIZON + 1}" stroke-width="2.5"/>`;
+                s += `<path d="M26 ${HORIZON + 11} Q62 ${HORIZON + 6} 98 ${HORIZON + 11} M296 ${HORIZON + 10} Q334 ${HORIZON + 4} 376 ${HORIZON + 10}" ${thin(1.2)}/>`;
+            } else {
+                s += `<path d="M0 ${HORIZON} H400"/>`;
+                const step = winter ? 46 : 29, cnt = winter ? 9 : 14;
+                const tick = Array.from({ length: cnt }, (_, i) => { const x = 8 + i * step + r() * 10; return `M${f(x)} ${HORIZON + 6} l3 -5 l3 5`; }).join(' ');
+                s += `<path d="${tick}" ${thin(1.2)}/>`;
+                if (spring) {
+                    const flower = (x, y) => `<g transform="translate(${x} ${y})"><path d="M0 0 V-7" ${thin(1.1)}/><circle cx="0" cy="-9" r="2.2" ${W} ${thin(1.1)}/><circle cx="0" cy="-9" r="0.8" ${BLK} stroke="none"/></g>`;
+                    s += [[22, 279], [54, 283], [176, 278], [224, 280], [344, 282], [378, 278]].map(([x, y]) => flower(x, y)).join('');
+                } else if (autumn) {
+                    const fl = (x, y, a) => `<path transform="translate(${x} ${y}) rotate(${a})" d="M-4 0 Q0 -3.5 4 0 Q0 3.5 -4 0 Z" ${W} ${thin(1.1)}/>`;
+                    s += [[32, 276, 15], [64, 281, -20], [182, 277, 10], [222, 280, -14], [336, 277, 18], [374, 281, -12]].map(p => fl(...p)).join('');
+                }
+            }
+
+            // Tall evergreen poplar + bush (left)
             s += `<path d="M26 ${HORIZON} V238 M26 252 L18 244" stroke-width="3"/>`;
             const poplar = spline([[26, 164], [38, 182], [43, 210], [38, 236], [26, 244], [14, 236], [9, 210], [14, 182]], true, 5);
             s += `<path d="${fuzz(poplar, 1.4, r)}" ${W}/>`;
-            s += `<path d="M20 190 q3 -3 6 0 M28 206 q3 -3 6 0 M18 220 q3 -3 6 0 M28 230 q3 -3 6 0" ${thin(1.2)}/>`;
+            s += w.snow
+                ? `<path d="M13 192 Q20 198 26 192 Q32 198 39 192" ${thin(1.5)}/>`
+                : `<path d="M20 190 q3 -3 6 0 M28 206 q3 -3 6 0 M18 220 q3 -3 6 0 M28 230 q3 -3 6 0" ${thin(1.2)}/>`;
             const bush = spline([[40, 252], [50, 238], [64, 236], [76, 246], [80, 262], [70, 268], [44, 268], [36, 262]], true, 4);
             s += `<path d="${fuzz(bush, 1.3, r)}" ${W}/>`;
-            s += `<path d="M52 250 q3 -3 6 0 M64 256 q3 -3 6 0" ${thin(1.2)}/>`;
+            s += w.snow
+                ? `<path d="M40 250 Q50 256 60 250 Q70 256 78 250" ${thin(1.5)}/>`
+                : spring
+                    ? [[48, 249], [60, 244], [70, 254]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.1" ${W} ${thin(1.1)}/>`).join('')
+                    : `<path d="M52 250 q3 -3 6 0 M64 256 q3 -3 6 0" ${thin(1.2)}/>`;
 
-            // Tree (right)
-            s += `<path d="M356 ${HORIZON} V226 M356 244 L344 232 M356 238 L368 228" stroke-width="3"/>`;
-            const canopy = spline([[356, 186], [380, 194], [392, 214], [386, 236], [362, 242], [338, 238], [326, 218], [334, 196]], true, 5);
-            s += `<path d="${fuzz(canopy, 1.6, r)}" ${W}/>`;
-            s += `<path d="M346 206 q4 -4 8 0 M366 216 q4 -4 8 0 M342 226 q4 -4 8 0 M362 232 q3 -3 6 0" ${thin(1.2)}/>`;
+            // Tree (right): bare winter branches in winter/snow; tucked back slightly when a right-yard animal stands near it
+            const yardOccupied = egg === 'deer' || egg === 'cow' || season.thanksgiving;
+            const rt = yardOccupied ? 'transform="translate(384 268) scale(.72) translate(-356 -268)"' : '';
+            s += `<g ${rt}>`;
+            if (winter) {
+                // Bare deciduous winter tree with graceful limbs (snow-draped when w.snow, white-haloed at night)
+                const limbs = `<path d="M356 ${HORIZON} V214 M356 242 L338 222 M346 231 L336 232 M338 222 L328 212 M338 222 L341 208 M356 236 L374 218 M366 226 L378 226 M374 218 L385 206 M374 218 L372 204 M356 222 L347 196 M351 208 L342 200 M356 218 L365 194 M361 206 L371 198" stroke-width="2.4"/>`;
+                s += w.night ? nightStroke(limbs, 4.4) : limbs;
+                if (w.snow) {
+                    s += `<path d="M332 216 Q340 212 346 217 M366 216 Q374 211 382 215 M348 197 Q356 192 364 196" stroke="#fff" stroke-width="4.5"/><path d="M332 216 Q340 212 346 217 M366 216 Q374 211 382 215 M348 197 Q356 192 364 196" ${thin(1.6)}/>`;
+                }
+            } else {
+                s += `<path d="M356 ${HORIZON} V226 M356 244 L344 232 M356 238 L368 228" stroke-width="3"/>`;
+                const canopy = spline([[356, 186], [380, 194], [392, 214], [386, 236], [362, 242], [338, 238], [326, 218], [334, 196]], true, 5);
+                s += `<path d="${fuzz(canopy, 1.6, r)}" ${W}/>`;
+                if (spring) {
+                    s += [[342, 204], [358, 196], [374, 206], [346, 224], [366, 226], [382, 220]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.3" ${W} ${thin(1.2)}/>`).join('');
+                } else {
+                    s += `<path d="M346 206 q4 -4 8 0 M366 216 q4 -4 8 0 M342 226 q4 -4 8 0 M362 232 q3 -3 6 0" ${thin(1.2)}/>`;
+                    if (autumn) {
+                        const fl = (x, y, a) => `<path transform="translate(${x} ${y}) rotate(${a})" d="M-4 0 Q0 -3.5 4 0 Q0 3.5 -4 0 Z" ${W} ${thin(1.1)}/>`;
+                        s += fl(326, 246, 28) + fl(344, 254, -22) + fl(374, 248, 35) + fl(18, 252, -30);
+                    }
+                }
+            }
+            s += `</g>`;
 
-            s += egg === 'castle' ? castle(w) : egg === 'alamo' ? alamo(w) : farmhouse(w, season);
+            s += (egg === 'castle' && extras.castle) ? extras.castle(w) : (egg === 'alamo' && extras.alamo) ? extras.alamo(w) : farmhouse(w, season);
 
-            if (season.wreath) {
+            if (season.wreath && egg !== 'castle' && egg !== 'alamo') {
                 s += `<circle cx="200" cy="234" r="7" ${W} stroke-width="3" stroke-dasharray="3 2"/><path d="M196 242 l4 -3 l4 3" ${thin(1.5)}/>`;
             }
             if (season.pumpkin) {
@@ -409,7 +496,7 @@
                 const face = season.halloween
                     ? `<path d="M-6 -2 l2 -3.5 l2 3.5 Z M2 -2 l2 -3.5 l2 3.5 Z M-6 1.5 Q0 6.5 6 1.5 L4 3 L2 2 L0 3.5 L-2 2 L-4 3 Z" ${BLK} ${thin(0.8)}/>`
                     : `<path d="M-3 -7 Q0 0 -3 7 M3 -7 Q0 0 3 7" ${thin(1.3)}/>`;
-                s += `<g transform="translate(176 ${HORIZON - 9})"><ellipse rx="10" ry="8" ${W}/>${face}<path d="M0 -8 l2 -5" ${thin(1.3)}/></g>`;
+                s += `<g transform="translate(186 ${HORIZON - 8})"><ellipse rx="10" ry="8" ${W}/>${face}<path d="M0 -8 l2 -5" ${thin(1.3)}/></g>`;
             }
             return s;
         }
@@ -417,8 +504,10 @@
         // The painting's farmhouse: chimney, body, gable roof, siding, gothic window, door
         function farmhouse(w, season) {
             let s = `<path d="M244 128 V92 H258 V136" ${W}/>`;
+            if (w.snow) s += `<path d="M242 93 Q251 86 260 93 Q251 97 242 93 Z" ${W} ${thin(1.8)}/>`;
             if (w.tier === 'coat') {
-                s += halo(`<path d="M251 86 q-8 -10 2 -18 q10 -8 2 -18 q-6 -8 4 -16" ${thin(2)}/>`, 5);
+                const smoke = `<path d="M251 84 q-8 -10 2 -18 q10 -8 2 -18 q-6 -8 4 -16" ${thin(2)}/>`;
+                s += w.night ? nightStroke(smoke, 4.6) : halo(smoke, 5);
             }
             s += `<rect x="128" y="160" width="144" height="${HORIZON - 160}" ${W}/>`;
             s += `<defs><clipPath id="houseClip"><path d="M130 ${HORIZON} V164 L200 82 L270 164 V${HORIZON} Z"/></clipPath></defs>`;
@@ -426,7 +515,11 @@
             for (let x = 136; x < 270; x += 9) siding += `M${x} 80 V${HORIZON} `;
             s += `<path d="M114 168 L200 78 L286 168" ${W} stroke-width="3"/>`;
             s += `<path d="${siding}" ${thin(1)} clip-path="url(#houseClip)"/>`;
-            s += `<path d="M110 170 L200 74 L290 170" stroke-width="3.5"/>`;
+            if (w.snow) {
+                s += `<path d="M107 167 L200 68 L293 167 Q284 176 276 168 Q266 158 256 146 L200 84 L144 146 Q134 158 124 168 Q116 176 107 167 Z" ${W} stroke-width="2.5"/>`;
+            } else {
+                s += `<path d="M110 170 L200 74 L290 170" stroke-width="3.5"/>`;
+            }
             s += `<path d="M128 174 H272" ${thin(1.5)}/>`;
 
             // Gothic window (the painting's signature)
@@ -449,78 +542,27 @@
             s += `<path d="M180 ${HORIZON} H220" stroke-width="3"/>`;
 
             if (season.lights) {
-                // Christmas lights along the eaves: alternating bulbs by day, all lit at night
-                let b = '';
-                for (const [x0, y0, x1, y1, nx] of [[112, 168, 196, 78, -1], [204, 78, 288, 168, 1]]) {
-                    for (let i = 0; i <= 9; i++) {
-                        const x = x0 + (x1 - x0) * i / 9 + nx * 2.9, y = y0 + (y1 - y0) * i / 9 - 2.7;
+                // Christmas lights draped gently below the eaves with a scalloped wire
+                let b = '', wire = '';
+                for (const [x0, y0, x1, y1, nx] of [[112, 172, 196, 82, 1], [204, 82, 288, 172, -1]]) {
+                    let prev = null;
+                    for (let i = 0; i <= 8; i++) {
+                        const x = x0 + (x1 - x0) * i / 8 + nx * 2.5, y = y0 + (y1 - y0) * i / 8 + 4;
+                        if (prev) wire += `M${f(prev[0])} ${f(prev[1])} Q${f((prev[0] + x) / 2)} ${f((prev[1] + y) / 2 + 3.5)} ${f(x)} ${f(y)} `;
+                        prev = [x, y];
                         b += w.night
-                            ? `<circle cx="${f(x)}" cy="${f(y)}" r="2.6" fill="#fff" stroke="none"/>`
+                            ? `<circle cx="${f(x)}" cy="${f(y)}" r="2.7" fill="#fff" stroke="#000" stroke-width="1"/>`
                             : `<circle cx="${f(x)}" cy="${f(y)}" r="2.4" ${i % 2 ? BLK : W} ${thin(1.2)}/>`;
                     }
                 }
-                s += b;
+                s += `<path d="${wire}" stroke="${w.night ? '#fff' : '#000'}" ${thin(1)}/>` + b;
             }
             return s;
         }
 
-        // Battlement top edge from x0 to x1 at height y (merlons stick up by h)
-        const crenels = (x0, x1, y, n, h = 7) => {
-            const step = (x1 - x0) / (2 * n - 1);
-            let d = `M${x0} ${y + h}`;
-            for (let i = 0; i < 2 * n - 1; i++) {
-                const x = f(x0 + i * step);
-                d += i % 2 ? ` V${y + h} H${f(x + step)}` : ` V${y} H${f(x + step)}`;
-            }
-            return d + ` V${y + h}`;
-        };
-
-        // Easter egg house: a castle with a keep, two round-roofed towers, pennants and a portcullis
-        function castle(w) {
-            let s = '';
-            for (const [x, flip] of [[112, 1], [250, -1]]) {
-                s += `<path d="${crenels(x - 4, x + 42, 100, 4)} V${HORIZON} H${x - 4} Z" ${W}/>`;
-                s += `<path d="M${x - 2} 100 L${x + 19} 52 L${x + 40} 100 Z" ${W}/>`;
-                s += `<path d="M${x + 19} 52 V34 l${12 * flip} 4 l${-12 * flip} 4" ${W} ${thin(1.8)}/>`;
-                s += `<rect x="${x + 16}" y="126" width="6" height="16" rx="3" ${BLK} ${thin(1.3)}/>`;
-                s += `<path d="M${x - 4} 110 H${x + 42}" ${thin(1.4)}/>`;
-            }
-            s += `<path d="${crenels(150, 250, 128, 6)} V${HORIZON} H150 Z" ${W}/>`;
-            // Stones
-            let st = '';
-            for (let y = 150; y < HORIZON; y += 14) for (let x = 156 + (y / 14 % 2) * 9; x < 244; x += 30) st += `M${x} ${y} h10 `;
-            for (const x of [118, 256]) for (let y = 160; y < HORIZON; y += 18) st += `M${x + (y % 36 ? 6 : 16)} ${y} h10 `;
-            s += `<path d="${st}" ${thin(1)}/>`;
-            // Arched window over the gate, and the gate with its portcullis
-            s += `<path d="M193 176 V162 Q193 154 200 154 Q207 154 207 162 V176 Z" ${w.night ? BLK : W} ${thin(1.8)}/>`;
-            s += `<path d="M180 ${HORIZON} V212 Q180 192 200 192 Q220 192 220 212 V${HORIZON}" ${W} stroke-width="3"/>`;
-            s += `<path d="M186 ${HORIZON} V204 M193 ${HORIZON} V196 M200 ${HORIZON} V194 M207 ${HORIZON} V196 M214 ${HORIZON} V204 M182 214 H218 M181 230 H219 M181 246 H219" ${thin(1.6)}/>`;
-            return s;
-        }
-
-        // Easter egg house: the Alamo's chapel facade (the famous hump, paired columns, niches)
-        function alamo(w) {
-            const top = 'M116 150 H150 Q157 150 159 142 Q163 128 176 126 Q187 124 189 112 Q192 100 200 100 Q208 100 211 112 Q213 124 224 126 Q237 128 241 142 Q243 150 250 150 H284';
-            let s = `<path d="${top} V${HORIZON} H116 Z" ${W}/>`;
-            s += `<path d="M112 150 H288 M114 194 H286" stroke-width="3"/>`;
-            // Stone texture
-            let st = '';
-            for (let y = 162; y < HORIZON; y += 13) for (let x = 122 + (y % 2) * 8; x < 278; x += 26) if (x < 162 || x > 236) st += `M${x} ${y} h8 `;
-            s += `<path d="${st}" ${thin(1)}/>`;
-            // Paired columns beside the door, both levels
-            for (const x of [164, 174, 226, 236]) {
-                s += `<rect x="${x - 2.5}" y="198" width="5" height="${HORIZON - 198}" ${W} ${thin(1.4)}/><path d="M${x - 4} 198 H${x + 4}" stroke-width="2"/>`;
-            }
-            for (const x of [170, 230]) s += `<rect x="${x - 2.5}" y="154" width="5" height="38" ${W} ${thin(1.4)}/>`;
-            // Niches
-            const niche = (x, y) => `<path d="M${x - 7} ${y + 26} V${y + 8} Q${x - 7} ${y} ${x} ${y} Q${x + 7} ${y} ${x + 7} ${y + 8} V${y + 26} Z" ${W} ${thin(1.6)}/><path d="M${x - 9} ${y + 28} H${x + 9}" ${thin(1.6)}/>`;
-            s += niche(144, 206) + niche(256, 206) + niche(144, 158) + niche(256, 158);
-            // Window and arched door
-            s += `<path d="M194 186 V172 Q194 164 200 164 Q206 164 206 172 V186 Z" ${BLK} stroke-width="2"/>`;
-            s += `<path d="M186 ${HORIZON} V222 Q186 206 200 206 Q214 206 214 222 V${HORIZON}" ${BLK} stroke-width="2.5"/>`;
-            s += `<path d="M182 ${HORIZON} V222 Q182 202 200 202 Q218 202 218 222 V${HORIZON}" ${thin(1.6)}/>`;
-            return s;
-        }
+        // Optional scene extras (castle, alamo, eggs, holidays) registered by <script id="scene-extras"> below the split.
+        const extras = {};
+        const ex = (k, ...a) => (extras[k] ? extras[k](...a) : '');
 
         // ---------- People ----------
 
@@ -544,15 +586,15 @@
             + `<path d="${fuzz(spline([[-28, -10], [0, -14], [28, -10], [29, 2], [0, -2], [-29, 2]], true, 4), 1.4, r)}" ${W} stroke-width="2"/>`
             + `<path d="${fuzz(spline([[34, -34], [41, -30], [41, -22], [34, -18], [27, -22], [27, -30]], true, 3), 1.4, r)}" ${W} stroke-width="2"/>`, k);
 
-        const witchHat = (x, y, deg) => tilt(x, y, deg,
-            `<path d="M-48 2 Q0 -14 48 2 Q0 12 -48 2 Z" ${DARK}/>`
-            + `<path d="M-22 -2 Q-14 -30 -6 -50 Q2 -66 18 -62 Q6 -56 8 -44 Q12 -22 22 -2 Q0 -8 -22 -2 Z" ${DARK}/>`
-            + `<path d="M-20 -8 Q0 -14 20 -8 L18 -15 Q0 -21 -18 -15 Z" ${W} ${thin(1.2)}/><rect x="-5" y="-19" width="10" height="9" ${W} stroke-width="2"/>`);
+        const witchHat = (x, y, deg, k = 1) => tilt(x, y, deg,
+            `<path d="M-54 3 Q0 -14 54 3 Q0 13 -54 3 Z" ${DARK}/>`
+            + `<path d="M-29 0 Q-20 -32 -8 -54 Q2 -70 20 -65 Q7 -58 10 -46 Q15 -22 29 0 Q0 -8 -29 0 Z" ${DARK}/>`
+            + `<path d="M-26 -7 Q0 -14 26 -7 L24 -15 Q0 -22 -24 -15 Z" ${W} ${thin(1.2)}/><rect x="-5.5" y="-19.5" width="11" height="9.5" ${W} stroke-width="2"/>`, k);
 
-        const cowboyHat = (x, y, deg, dark) => tilt(x, y, deg,
-            `<path d="M-21 -4 Q-24 -28 -14 -34 Q0 -27 14 -34 Q24 -28 21 -4 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`
-            + `<path d="M-20.5 -9 Q0 -13 20.5 -9" stroke="${dark ? '#fff' : '#000'}" stroke-width="3.5"/>`
-            + `<path d="M-48 -8 Q-42 4 -20 2 Q0 0 20 2 Q42 4 48 -8 Q40 -3 22 -6 Q0 -9 -22 -6 Q-40 -3 -48 -8 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`);
+        const cowboyHat = (x, y, deg, dark, k = 1) => tilt(x, y, deg,
+            `<path d="M-30 -2 Q-32 -30 -18 -38 Q0 -30 18 -38 Q32 -30 30 -2 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`
+            + `<path d="M-29.5 -8 Q0 -13 29.5 -8" stroke="${dark ? '#fff' : '#000'}" stroke-width="3.5"/>`
+            + `<path d="M-58 -8 Q-50 6 -24 3 Q0 1 24 3 Q50 6 58 -8 Q48 -2 26 -6 Q0 -10 -26 -6 Q-48 -2 -58 -8 Z" ${dark ? DARK : W + ' stroke-width="2"'}/>`, k);
 
         const shamrock = (x, y, s = 1, white = false) => {
             const leaf = 'M0 0 C-3 -2 -5 -5 -3 -7 C-2 -8 0 -8 0 -6 C0 -8 2 -8 3 -7 C5 -5 3 -2 0 0 Z';
@@ -562,114 +604,169 @@
         };
 
         const leprechaunHat = (x, y, deg, k) => tilt(x, y, deg,
-            `<path d="M-17 -2 L-14 -34 H14 L17 -2 Z" ${DARK}/>`
-            + `<path d="M-16.4 -6 L-15.5 -15 H15.5 L16.4 -6 Z" ${W} ${thin(1.2)}/><rect x="-5" y="-15" width="10" height="9" ${BLK} stroke="none"/><rect x="-2.5" y="-12.6" width="5" height="4.2" ${W} stroke="none"/>`
-            + `<path d="M-34 0 Q0 -8 34 0 Q0 8 -34 0 Z" ${DARK}/>` + shamrock(9, -24, 0.9, true), k);
+            `<path d="M-23 -1 L-20 -35 H20 L23 -1 Z" ${DARK}/>`
+            + `<path d="M-22.2 -5 L-21.3 -14 H21.3 L22.2 -5 Z" ${W} ${thin(1.2)}/><rect x="-5.5" y="-14" width="11" height="9" ${BLK} stroke="none"/><rect x="-2.8" y="-11.6" width="5.6" height="4.2" ${W} stroke="none"/>`
+            + `<path d="M-40 1 Q0 -8 40 1 Q0 9 -40 1 Z" ${DARK}/>` + shamrock(12, -24, 0.9, true), k);
 
         // Hat priority: birthday > holiday > cowboy egg > cold-weather beanie
         const hatFor = (who, w, season, egg) => season.party ? 'party' : season.santa ? 'santa'
             : season.halloween && who === 'her' ? 'witch' : season.stPatrick && who === 'him' ? 'leprechaun'
             : egg === 'cowboyHats' ? 'cowboy' : w.tier === 'coat' ? 'beanie' : null;
 
-        // Her: left, gray bob, rimless glasses, big smile, ring pendant.
+        // Her: left, chin-length silver-gray wavy bob (parted viewer-left), rimmed glasses, warm smile, ring pendant.
         function her(w, r, season, egg) {
             let s = '';
             const cx = 118;
-            // Hair (back silhouette)
-            const hairPts = spline([[118, 207], [142, 210], [156, 226], [161, 252], [160, 276], [168, 297], [152, 303], [118, 305], [84, 303], [68, 297], [76, 276], [75, 252], [80, 226], [94, 210]], true, 5);
-            s += `<path d="${fuzz(hairPts, 1.1, r)}" ${W}/>`;
+            // Hair (back silhouette: shorter wavy chin-to-jaw bob, fuller on viewer's right where it sweeps)
+            const hairPts = spline([
+                [114, 207], [136, 209], [154, 222], [161, 244], [159, 266], [164, 282], [152, 290], [139, 287],
+                [118, 290], [97, 287], [84, 290], [74, 281], [78, 264], [77, 242], [84, 222], [98, 210]
+            ], true, 5);
+            const hairOutline = fuzz(hairPts, 0.85, r);
+            s += `<path d="${hairOutline}" ${W} ${thin(1.8)}/>`;
 
-            // Torso (with arms as part of the silhouette)
-            s += `<path d="M28 480 L34 374 Q38 328 78 318 Q98 313 106 306 L130 306 Q138 313 158 318 Q198 328 202 374 L208 480 Z" ${W}/>`;
+            // Torso (slimmer sloping feminine shoulders, graceful arms, gentle waist taper; meets neck at (103,306) & (133,306))
+            const coat = w.tier === 'coat';
+            const torsoPath = coat
+                ? 'M36 480 L40 382 Q44 334 76 318 Q94 311 103 306 L133 306 Q142 311 160 318 Q192 334 196 382 L200 480 Z'
+                : 'M40 480 L44 394 Q46 354 58 337 Q72 318 103 306 L133 306 Q164 318 178 337 Q190 354 192 394 L196 480 Z';
+            s += `<path d="${torsoPath}" ${W}/>`;
+            // Occasional fun clothing print on her tee, tank, or cardigan
+            if (!coat && !season.swim && season.herLook && season.herLook !== 'plain') {
+                const bodyClip = w.tier === 'tank'
+                    ? 'M73 480 Q76 430 75 376 Q91 350 91 311 L103 306 Q118 346 133 306 L145 311 Q145 350 161 376 Q160 430 163 480 Z'
+                    : w.tier === 'tee'
+                        ? 'M46 382 Q58 390 75 388 Q79 428 73 480 H163 Q157 428 161 388 Q178 390 190 382 Q188 352 178 337 Q164 318 133 306 L118 348 L103 306 Q72 318 58 337 Q48 352 46 382 Z'
+                        : torsoPath;
+                s += `<defs><clipPath id="herTopClip"><path d="${bodyClip}"/></clipPath></defs><g clip-path="url(#herTopClip)">`;
+                if (season.herLook === 'stripes') {
+                    let st = '';
+                    for (let y = 326; y < 480; y += 14) st += `M40 ${y} H196 `;
+                    s += `<path d="${st}" ${thin(1.4)}/>`;
+                } else if (season.herLook === 'stars') {
+                    // Subtle starry sparkle motif (a nod to her starry dress!)
+                    const sp = (x, y, k) => `<path d="M${x} ${y - k} L${x + k * .28} ${y - k * .28} L${x + k} ${y} L${x + k * .28} ${y + k * .28} L${x} ${y + k} L${x - k * .28} ${y + k * .28} L${x - k} ${y} L${x - k * .28} ${y - k * .28} Z" ${BLK} stroke="none"/>`;
+                    s += [[88, 368, 4.5], [146, 364, 4], [116, 392, 5], [86, 422, 4], [148, 428, 4.8], [114, 456, 4.2], [62, 360, 3.6], [174, 362, 3.6]].map(p => sp(...p)).join('');
+                    s += [[102, 376], [134, 384], [96, 408], [136, 412], [100, 444], [136, 448], [84, 466], [150, 468]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="1.4" ${BLK} stroke="none"/>`).join('');
+                } else if (season.herLook === 'dots') {
+                    let dt = '';
+                    for (let y = 330; y < 476; y += 22) for (let x = 52 + ((y / 22 | 0) % 2) * 11; x < 188; x += 22) dt += `<circle cx="${x}" cy="${y}" r="2.1" ${BLK} stroke="none"/>`;
+                    s += dt;
+                } else if (season.herLook === 'floral') {
+                    // Delicate botanical sprig on upper left chest
+                    s += `<g transform="translate(142 384)"><path d="M-8 14 Q-2 2 8 -10 M-3 6 Q-10 3 -12 -3 Q-5 -3 -3 6 Z M2 0 Q10 1 13 -5 Q6 -6 2 0 Z" ${W} ${thin(1.2)}/><circle cx="9" cy="-12" r="3" ${W} ${thin(1.2)}/><circle cx="9" cy="-12" r="1" ${BLK} stroke="none"/></g>`;
+                }
+                s += `</g><path d="${torsoPath}" fill="none"/>`;
+            }
 
-            // Neck / neckline
+            // Neck / neckline (anchored flush to the torso's shoulder endpoints at (103,306) and (133,306))
             if (season.swim) {
-                // Bare neck and collarbones (covers the torso's top edge)
-                s += `<path d="M106 278 V310 H130 V278 Z" ${W} stroke="none"/><path d="M106 278 V306 M130 278 V306" />`;
-                s += `<path d="M94 322 Q104 317 113 322 M123 322 Q132 317 142 322" ${thin(1.3)}/>`;
+                s += `<path d="M107 280 Q107 298 103 307 H133 Q129 298 129 280 Z" ${W} stroke="none"/>`;
+                s += `<path d="M107 280 Q107 298 103 306 M129 280 Q129 298 133 306"/>`;
+                s += `<path d="M94 321 Q104 316 113 321 M123 321 Q132 316 142 321" ${thin(1.2)}/>`;
             } else {
-                const neckline = w.tier === 'tank' ? 'L102 310 Q118 346 134 310' : 'L104 306 L118 338 L132 306';
-                s += `<path d="M106 278 V302 ${neckline} L130 302 V278 Z" ${W}/>`;
+                const neckline = w.tier === 'tank'
+                    ? 'Q118 346 133 306'
+                    : 'L118 348 L133 306';
+                s += `<path d="M107 280 Q107 298 103 306 ${neckline} Q129 298 129 280 Z" ${W}/>`;
             }
 
-            // Clothing details
-            s += `<path d="M70 364 Q66 420 66 480 M166 364 Q170 420 170 480" ${thin(1.6)}/>`;
+            // Inner arm lines with a subtle feminine waist contour
+            s += coat
+                ? `<path d="M74 368 Q71 424 70 480 M162 368 Q165 424 166 480" ${thin(1.6)}/>`
+                : `<path d="M75 370 Q79 412 76 452 Q74 468 73 480 M161 370 Q157 412 160 452 Q162 468 163 480" ${thin(1.5)}/>`;
+
             if (season.swim) {
-                // Polka-dot halter bikini top
-                s += `<path d="M95 344 L108 306 M141 344 L128 306 M74 390 L68 392 M162 390 L168 392 M113 393 H123" ${thin(1.8)}/>`;
-                s += `<path d="M74 390 Q78 362 95 342 Q111 362 113 393 Q95 408 74 390 Z M162 390 Q158 362 141 342 Q125 362 123 393 Q141 408 162 390 Z" ${BLK} stroke-width="2"/>`;
-                s += [[85, 384], [95, 366], [103, 382], [94, 395], [151, 384], [141, 366], [133, 382], [142, 395]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.1" fill="#fff" stroke="none"/>`).join('');
-                s += `<path d="M116 452 q2 3 4 0" ${thin(1.4)}/>`;
+                // Polka-dot halter bikini top (fitted to slimmer torso)
+                s += `<path d="M97 346 L109 306 M139 346 L127 306 M78 390 L74 392 M158 390 L162 392 M113 393 H123" ${thin(1.8)}/>`;
+                s += `<path d="M78 390 Q82 364 97 344 Q111 364 113 393 Q97 407 78 390 Z M158 390 Q154 364 139 344 Q125 364 123 393 Q139 407 158 390 Z" ${BLK} stroke-width="2"/>`;
+                s += [[88, 384], [97, 367], [104, 382], [96, 394], [148, 384], [139, 367], [132, 382], [140, 394]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2" fill="#fff" stroke="none"/>`).join('');
+                s += `<path d="M116 450 q2 3 4 0" ${thin(1.3)}/>`;
             } else if (w.tier === 'tank') {
-                s += `<path d="M90 316 L88 366 Q76 384 36 392 M146 316 L148 366 Q160 384 200 392" ${thin(2)}/>`;
+                // Sleeveless tank: straps start flush on the shoulder curve at (91,311) & (145,311) and scoop to the armpits
+                s += `<path d="M91 311 Q91 350 75 376 M145 311 Q145 350 161 376" ${thin(2.1)}/>`;
+                s += `<path d="M94 310 Q94 352 77 378 M142 310 Q142 352 159 378" ${thin(0.9)}/>`;
+                s += `<path d="M101 309 Q118 350 135 309" ${thin(0.9)}/>`;
             } else if (w.tier === 'tee') {
-                s += `<path d="M34 392 Q50 398 68 394 M168 394 Q186 398 202 392" ${thin(2)}/>`;
+                // Soft short-sleeve V-neck tee
+                s += `<path d="M46 382 Q58 390 75 388 M190 382 Q178 390 161 388" ${thin(2)}/>`;
+                s += `<path d="M47 377 Q59 385 75 383 M189 377 Q177 385 161 383" ${thin(0.9)}/>`;
+                s += `<path d="M100 308 L118 353 L136 308" ${thin(0.9)}/>`;
             } else if (w.tier === 'long') {
-                // Cardigan over the V-neck
-                s += `<path d="M102 309 Q96 360 96 480 M134 309 Q140 360 140 480" ${thin(2)}/>`;
-                s += [380, 420, 460].map(y => `<circle cx="${y === 460 ? 97 : 98}" cy="${y}" r="2.6" ${BLK}/>`).join('');
+                // Cardigan over the V-neck (edges anchored cleanly at the shoulder/neck join)
+                s += `<path d="M101 307 Q96 360 97 480 M135 307 Q140 360 139 480" ${thin(2)}/>`;
+                s += [380, 420, 460].map(y => `<circle cx="${y === 460 ? 98 : 99}" cy="${y}" r="2.5" ${BLK}/>`).join('');
             }
-            if (w.tier === 'coat') {
+            if (coat) {
                 // Puffer coat: stand collar, zipper, quilting
-                s += `<path d="M98 296 Q118 304 138 296 L140 318 Q118 326 96 318 Z" ${W}/>`;
+                s += `<path d="M99 298 Q118 306 137 298 L139 318 Q118 326 97 318 Z" ${W}/>`;
                 s += `<path d="M118 326 V480" stroke-width="2"/><path d="M118 330 V480" ${thin(1)} stroke-dasharray="1 3" transform="translate(3 0)"/>`;
-                s += `<path d="M36 372 Q76 380 114 378 M122 378 Q160 380 200 372 M34 422 Q76 430 114 428 M122 428 Q160 430 202 422 M32 466 Q76 474 114 472 M122 472 Q160 474 204 466" ${thin(1.6)}/>`;
+                s += `<path d="M43 372 Q80 380 114 378 M122 378 Q156 380 193 372 M40 422 Q80 430 114 428 M122 428 Q156 430 196 422 M38 466 Q80 474 114 472 M122 472 Q156 474 198 466" ${thin(1.6)}/>`;
             } else if (!season.swim) {
-                // Ring pendant necklace
-                s += `<path d="M107 304 Q110 330 117 346 M129 304 Q126 330 119 346" ${thin(0.9)}/>`;
-                s += `<circle cx="118" cy="351" r="5" ${thin(1.8)}/>`;
+                // Ring pendant necklace (chain anchored at the neck sides, pendant resting cleanly inside the V-neck/scoop)
+                s += `<path d="M106 300 Q109 317 117 328 M130 300 Q127 317 119 328" ${thin(0.9)}/>`;
+                s += season.valentine
+                    ? `<path d="M118 339 C112 335 111 330 114.5 328 C116.5 327 118 328.5 118 330 C118 328.5 119.5 327 121.5 328 C125 330 124 335 118 339 Z" ${BLK} stroke-width="1"/>`
+                    : `<circle cx="118" cy="333" r="4.8" ${thin(1.8)}/>`;
             }
             if (w.scarf) {
-                s += `<path d="M96 300 Q118 312 140 300 L142 318 Q118 330 94 318 Z" ${W}/>`;
-                s += `<path d="M100 320 L92 396 L110 398 L112 324 Z" ${W}/><path d="M94 384 L110 386 M95 400 l0 8 M100 400 l0 8 M105 400 l0 8 M110 400 l0 8" ${thin(1.4)}/>`;
+                s += `<path d="M97 301 Q118 313 139 301 L141 318 Q118 330 95 318 Z" ${W}/>`;
+                s += `<path d="M101 320 L93 394 L110 396 L112 324 Z" ${W}/><path d="M95 382 L110 384 M96 398 l0 8 M101 398 l0 8 M106 398 l0 8 M110 398 l0 8" ${thin(1.4)}/>`;
             }
 
-            // Face
-            s += `<ellipse cx="${cx}" cy="258" rx="30" ry="37" ${W}/>`;
-            // Hair over the forehead: white cap above the hairline, then the hairline stroke
-            s += `<path d="M88 258 Q89 222 126 213 Q149 222 149 256 L160 256 L157 222 L118 205 L79 222 L76 258 Z" fill="#fff" stroke="none"/>`;
-            s += `<path d="M88 258 Q89 222 126 213 Q149 222 149 256" stroke-width="2"/>`;
-            s += `<path d="M126 213 Q100 226 85 274 M126 213 Q108 220 94 240 M127 214 Q146 232 154 282 M130 210 Q144 214 152 226 M84 282 Q80 292 72 297 M154 284 Q158 292 165 297 M112 209 Q96 214 86 232" ${thin(1.1)}/>`;
+            // Face (graceful oval tapering gently to a softer chin) + tiny stud earrings
+            s += `<path d="M90 250 Q90 219 118 218 Q146 219 146 250 Q146 274 134 287 Q126 295 118 295 Q110 295 102 287 Q90 274 90 250 Z" ${W}/>`;
+            s += `<circle cx="89" cy="272" r="1.4" ${BLK} stroke="none"/><circle cx="147" cy="272" r="1.4" ${BLK} stroke="none"/>`;
+            // Hair over the forehead: mask only the upper face arc strictly inside the outer hair silhouette
+            s += `<path d="M89 252 Q89 217 118 216 Q147 217 147 252 L146 254 Q134 221 106 215 Q91 227 90 254 Z" fill="#fff" stroke="none"/>`;
+            s += `<path d="M90 254 Q91 227 106 215 Q134 221 146 254" ${thin(1.6)}/>`;
+            s += `<path d="M106 215 Q130 216 149 236 M112 211 Q138 214 155 244 M145 232 Q155 256 154 276 Q156 283 161 285 M105 215 Q92 224 85 248 M98 212 Q84 224 81 252 Q80 272 75 282 M88 268 Q85 280 79 286 M148 268 Q151 280 157 286" ${thin(1.1)}/>`;
 
             // Hat
             const hat = hatFor('her', w, season, egg);
             if (hat === 'party') s += partyHat(114, 214, -14, r);
             else if (hat === 'santa') s += santaHat(116, 222, -10, r);
-            else if (hat === 'witch') s += witchHat(116, 214, -8);
-            else if (hat === 'cowboy') s += cowboyHat(118, 226, -5, false);
+            else if (hat === 'witch') s += witchHat(116, 224, -6, 1.08);
+            else if (hat === 'cowboy') s += cowboyHat(118, 232, -4, false, 1.1);
             else if (hat === 'beanie') {
                 s += `<path d="M79 246 Q80 198 118 193 Q156 198 157 246 Q118 226 79 246 Z" ${W}/>`;
                 s += `<path d="M81 234 Q118 214 155 234" ${thin(1.6)}/>`;
                 for (let i = 0; i <= 12; i++) {
                     const x = 83 + i * 6;
-                    const t = (x - 81) / 74; const yTop = 234 - 4 * 20 * t * (1 - t) - 0; const yBot = 246 - 4 * 20 * t * (1 - t);
+                    const t = (x - 81) / 74; const yTop = 234 - 4 * 20 * t * (1 - t); const yBot = 246 - 4 * 20 * t * (1 - t);
                     s += `<path d="M${f(x)} ${f(yTop + 1)} V${f(yBot - 1)}" ${thin(1)}/>`;
                 }
                 s += `<path d="${fuzz(spline([[118, 178], [127, 182], [130, 190], [126, 198], [118, 200], [110, 198], [106, 190], [109, 182]], true, 3), 1.5, r)}" ${W}/>`;
             }
 
-            // Features
-            s += `<path d="M97 241 Q104 236 112 240 M124 240 Q132 236 139 241" stroke-width="2"/>`;
+            // Features: clean arched brows, warm smiling eyes, rimmed glasses, soft nose, natural open smile
+            s += `<path d="M96 241 Q104 235 112 238 M124 238 Q132 235 140 241" stroke-width="2.2"/>`;
             if (w.sunglasses) {
-                s += `<path d="M94 249 Q104 246 114 249 Q114 262 104 263 Q94 262 94 249 Z M122 249 Q132 246 142 249 Q142 262 132 263 Q122 262 122 249 Z" ${BLK} stroke-width="1.5"/>`;
-                s += `<path d="M98 252 l4 -3 M126 252 l4 -3" stroke="#fff" ${thin(1.3)}/>`;
-                s += `<path d="M114 251 Q118 248 122 251 M94 250 L86 248 M142 250 L150 248" ${thin(1.5)}/>`;
+                s += `<path d="M94 248 Q104 245 114 248 Q114 261 104 262 Q94 261 94 248 Z M122 248 Q132 245 142 248 Q142 261 132 262 Q122 261 122 248 Z" ${BLK} stroke-width="1.5"/>`;
+                s += `<path d="M98 251 l4 -3 M126 251 l4 -3" stroke="#fff" ${thin(1.3)}/>`;
+                s += `<path d="M114 250 Q118 247 122 250 M94 249 L87 248 M142 249 L149 248" ${thin(1.5)}/>`;
             } else {
-                s += `<circle cx="104" cy="255" r="2.3" ${BLK} stroke="none"/><circle cx="132" cy="255" r="2.3" ${BLK} stroke="none"/>`;
-                s += `<path d="M98 252 q6 -3 12 0 M126 252 q6 -3 12 0" ${thin(1)}/>`;
-                s += `<rect x="94" y="247" width="20" height="15" rx="6" ${thin(1)}/><rect x="122" y="247" width="20" height="15" rx="6" ${thin(1)}/>`;
-                s += `<path d="M114 252 Q118 249 122 252 M94 251 L86 249 M142 251 L150 249" ${thin(1)}/>`;
+                s += `<circle cx="104" cy="252" r="2.3" ${BLK} stroke="none"/><circle cx="132" cy="252" r="2.3" ${BLK} stroke="none"/>`;
+                s += `<path d="M98 250 Q104 246 110 250 M126 250 Q132 246 138 250" ${thin(1.2)}/>`;
+                s += `<rect x="94" y="245" width="20" height="14" rx="5.5" ${thin(1.1)}/><rect x="122" y="245" width="20" height="14" rx="5.5" ${thin(1.1)}/>`;
+                s += `<path d="M114 250 Q118 247.5 122 250 M94 249 L87 248 M142 249 L149 248" ${thin(1.1)}/>`;
             }
-            s += `<path d="M118 258 Q116 266 113 269 Q117 272 122 270" ${thin(1.8)}/>`;
-            s += `<path d="M103 277 Q118 296 133 277 Q118 282 103 277 Z" ${W} stroke-width="2"/>`;
-            s += `<path d="M107 281 Q118 286 129 281" ${thin(1)}/>`;
-            s += `<path d="M99 272 q-2 4 1 8 M137 272 q2 4 -1 8" ${thin(1.2)}/>`;
+            s += `<path d="M118 256 Q116.5 264 114.5 266.5 Q118 269 121.5 266.5" ${thin(1.5)}/>`;
+            s += `<path d="M104 275 Q118 279 132 275 Q128 286 118 286 Q108 286 104 275 Z" ${W} stroke-width="1.9"/>`;
+            s += `<path d="M107 279 Q118 282 129 279" ${thin(0.95)}/>`;
+            s += `<path d="M100 271 Q98 275 101 279 M136 271 Q138 275 135 279" ${thin(1.1)}/>`;
+            if (!w.night && w.temp >= 100 && !w.rain) {
+                // Subtle sweat drop on her forehead on 100°F+ days
+                s += `<path d="M132 224 C132 224 129.2 229 129.2 231 a2.8 2.8 0 0 0 5.6 0 C134.8 229 132 224 132 224 Z" ${W} ${thin(1.3)}/>`;
+            }
             return s;
         }
 
-        // His t-shirt print, centered on the chest below the beard (his coordinates)
-        const SHIRTS = ['weird', 'weird', 'apple', 'texas', 'yall'];
-        const SHIRT_CHANCE = 0.1; // per day; otherwise a plain tee
+        // His t-shirt variations (plain most days; pocket is an occasional variation alongside graphics)
+        const SHIRTS = ['weird', 'weird', 'apple', 'texas', 'yall', 'pocket'];
+        const SHIRT_CHANCE = 0.18; // per day; otherwise a plain tee
+        const HER_LOOKS = ['stripes', 'stars', 'dots', 'floral'];
+        const HER_CHANCE = 0.25;   // per day; otherwise plain top
         const SWIM_CHANCE = 0.1;   // per tank-top day
         function shirtArt(kind) {
             const font = `font-family="Helvetica, Arial, sans-serif" font-weight="900" text-anchor="middle" ${BLK} stroke="none"`;
@@ -688,6 +785,8 @@
                 case 'texas':
                     return `<g transform="translate(283 392)"><path d="M-12.2 -25.5 L0.5 -25.5 L0.5 -16.1 L3.8 -15.3 L6.7 -13.9 L10.4 -12.9 L13.3 -12.7 L17 -12.7 L19.9 -12.8 L23.4 -11.7 L25.2 -11.2 L25.2 -3.7 L27 1.1 L26.4 4.5 L26 7.4 L22.4 9.1 L20.8 10.3 L17.9 12.2 L14.6 14.2 L12.9 16.1 L11.2 19 L11.2 22.4 L12.3 25.5 L10 25.1 L7.5 24.3 L4.2 23.1 L2.5 18.5 L-0.8 14.7 L-2.4 10.3 L-5.4 7.2 L-9.1 6.5 L-10.7 7.2 L-12.4 10.9 L-14.1 10.1 L-16.1 9.1 L-18.2 7.6 L-19 5 L-22.8 0.6 L-25.3 -1.1 L-26.6 -2.7 L-27 -3.7 L-12.2 -3.7 Z" ${BLK} stroke-width="1.5"/>`
                         + `<path d="M9.8 -1.2 l1.6 3.6 3.9 .4 -2.9 2.6 .8 3.8 -3.4 -2 -3.4 2 .8 -3.8 -2.9 -2.6 3.9 -.4 Z" fill="#fff" stroke="none"/></g>`;
+                case 'pocket':
+                    return `<path d="M298 370 H322 V394 L310 400 L298 394 Z M298 375 H322" ${thin(1.4)}/>`;
                 default:
                     return '';
             }
@@ -715,9 +814,12 @@
                 s += `<path d="M272 352 q2 3 0 6 M283 356 q2 3 0 6 M294 352 q2 3 0 6 M277 394 q2 3 0 6 M289 394 q2 3 0 6 M283 410 q2 3 0 6" ${thin(1.1)}/>`;
                 s += `<path d="M281 440 q2 4 4 0" ${thin(1.5)}/>`;
             } else if (w.tier === 'tank') {
-                s += `<path d="M252 316 L248 372 Q238 390 202 398 M312 316 L316 372 Q326 390 362 398" ${thin(2)}/>`;
+                // Sleeveless tank: straps scoop cleanly into the armpits without crossing the bare arms
+                s += `<path d="M250 317 Q252 356 236 380 M314 317 Q312 356 330 380" ${thin(2.2)}/>`;
+                s += `<path d="M254 316 Q256 358 238 382 M310 316 Q308 358 328 382" ${thin(0.9)}/>`;
             } else if (w.tier === 'tee') {
                 s += `<path d="M200 394 Q216 400 234 396 M332 396 Q348 400 364 394" ${thin(2)}/>`;
+                s += `<path d="M201 389 Q216 395 234 391 M332 391 Q348 395 363 389" ${thin(0.9)}/>`;
             } else if (w.tier === 'long') {
                 s += `<path d="M282 350 V480" ${thin(2)}/>` + [384, 418, 452].map(y => `<circle cx="287" cy="${y}" r="2.6" ${W} stroke-width="1.5"/>`).join('');
             } else if (w.tier === 'coat') {
@@ -726,7 +828,9 @@
                 s += `<path d="M216 446 H252 V460 M312 446 H348 V460" ${thin(2)}/>`;
                 s += [372, 404, 436].map(y => `<path d="M206 ${y} q4 3 8 0 M350 ${y} q4 3 8 0" ${thin(1)}/>`).join('');
             }
-            if (!season.swim && (w.tier === 'tee' || w.tier === 'tank')) s += shirtArt(season.shirt);
+            if (!season.swim && (w.tier === 'tee' || w.tier === 'tank') && season.shirt && season.shirt !== 'plain') {
+                s += shirtArt(season.shirt);
+            }
             // Collar points beside the beard
             if (w.tier === 'long' || w.tier === 'coat') {
                 const big = w.tier === 'coat';
@@ -738,18 +842,29 @@
                 s += `<path d="M300 334 L306 420 L322 418 L314 332 Z" ${W}/><path d="M304 360 L318 358 M304 390 L320 388 M307 422 l1 8 M312 421 l1 8 M317 420 l1 8" ${thin(1.4)}/>`;
             }
 
-            // Ears + head
+            // Ears, fuller side hair + airy crown wisps (suppressed under hats), and head
+            const hat = hatFor('him', w, season, egg);
+            if (!hat) {
+                // Soft hair tufts framing both sides above the ears + light wispy halo over the high forehead
+                const sideL = spline([[252, 236], [242, 224], [241, 208], [250, 194], [262, 193], [256, 208], [253, 226]], true, 4);
+                const sideR = spline([[312, 236], [322, 224], [323, 208], [314, 194], [302, 193], [308, 208], [311, 226]], true, 4);
+                s += `<path d="${fuzz(sideL, 1.4, r)}" ${W} ${thin(1.6)}/><path d="${fuzz(sideR, 1.4, r)}" ${W} ${thin(1.6)}/>`;
+            }
             s += `<ellipse cx="247" cy="238" rx="6" ry="11" ${W}/><ellipse cx="317" cy="238" rx="6" ry="11" ${W}/>`;
             s += `<path d="M246 233 q3 4 0 9 M318 233 q-3 4 0 9" ${thin(1.2)}/>`;
             s += `<ellipse cx="${cx}" cy="236" rx="35" ry="45" ${W}/>`;
-            // Short hair on the sides only
-            s += `<path d="${fuzz(spline([[250, 242], [249, 226], [252, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
-            s += `<path d="${fuzz(spline([[314, 242], [315, 226], [312, 212]], false, 5), 0.9, r, false)}" ${thin(1.3)}/>`;
-            const hat = hatFor('him', w, season, egg);
+            // Soft receding temple hairlines + fine wispy strands over the crown when bareheaded
+            s += `<path d="${fuzz(spline([[250, 240], [248, 224], [253, 208]], false, 5), 1.0, r, false)}" ${thin(1.4)}/>`;
+            s += `<path d="${fuzz(spline([[314, 240], [316, 224], [311, 208]], false, 5), 1.0, r, false)}" ${thin(1.4)}/>`;
+            if (!hat) {
+                // Airy upward wisps fluttering off the upper sides/crown (keeps center dome clean, no headband look)
+                const wisps = '<path d="M244 206 Q240 197 247 192 M249 198 Q250 186 260 185 M256 193 Q262 183 271 186 M266 190 Q273 181 278 185 M320 206 Q324 197 317 192 M315 198 Q314 186 304 185 M308 193 Q302 183 293 186 M298 190 Q291 181 286 185" stroke-width="1"/>';
+                s += w.night ? nightStroke(wisps, 3.2) : wisps;
+            }
             if (hat === 'party') s += partyHat(286, 196, 14, r);
             else if (hat === 'santa') s += santaHat(284, 208, 8, r, 1.15);
-            else if (hat === 'leprechaun') s += leprechaunHat(282, 208, 6, 1.25);
-            else if (hat === 'cowboy') s += cowboyHat(282, 206, 5, true);
+            else if (hat === 'leprechaun') s += leprechaunHat(282, 212, 5, 1.25);
+            else if (hat === 'cowboy') s += cowboyHat(282, 217, 4, true, 1.18);
             else if (hat === 'beanie') {
                 s += `<path d="M245 228 Q244 180 282 175 Q320 180 319 228 Q282 208 245 228 Z" ${W}/>`;
                 s += `<path d="M246 216 Q282 196 318 216" ${thin(1.6)}/>`;
@@ -763,37 +878,49 @@
                 s += `<g transform="translate(286 182)"><path d="M-10 0 Q-10 -12 2 -12 Q8 -12 10 -6 L16 -4 L10 -2 Q8 6 -2 6 L-16 4 Z" ${W} stroke-width="2"/><circle cx="5" cy="-7" r="1.4" ${BLK}/><path d="M-4 -4 Q0 2 6 0 M-2 6 V10 M3 6 V10" ${thin(1.4)}/></g>`;
             }
 
-            // Brows, glasses, eyes, nose
-            s += `<path d="M258 221 Q268 215 277 219 M287 219 Q296 215 306 221" stroke-width="2.4"/>`;
+            // Friendly brows, sleek thin semi-rimless glasses, warm eyes, softer rounded nose
+            s += `<path d="M258 222 Q267 217 276 221 M288 221 Q297 217 306 222" stroke-width="1.9"/>`;
             if (w.sunglasses) {
-                s += `<rect x="256" y="226" width="23" height="15" rx="3" ${BLK} stroke-width="2"/><rect x="285" y="226" width="23" height="15" rx="3" ${BLK} stroke-width="2"/>`;
+                s += `<rect x="256" y="226" width="23" height="14" rx="3" ${BLK} stroke-width="1.8"/><rect x="285" y="226" width="23" height="14" rx="3" ${BLK} stroke-width="1.8"/>`;
                 s += `<path d="M260 231 l5 -3 M289 231 l5 -3" stroke="#fff" ${thin(1.3)}/>`;
+                s += `<path d="M279 230 Q282 227.5 285 230 M256 230 L248 229 M308 230 L316 229" stroke-width="1.6"/>`;
             } else {
-                s += `<circle cx="268" cy="234" r="2.3" ${BLK} stroke="none"/><circle cx="296" cy="234" r="2.3" ${BLK} stroke="none"/>`;
-                s += `<path d="M256 240 V230 Q256 226 260 226 H275 Q279 226 279 230 V240 M285 240 V230 Q285 226 289 226 H304 Q308 226 308 230 V240" stroke-width="2"/>`;
-                s += `<path d="M257 240 Q268 243 278 240 M286 240 Q296 243 307 240" ${thin(0.9)}/>`;
+                s += `<circle cx="268" cy="233.5" r="2.3" ${BLK} stroke="none"/><circle cx="296" cy="233.5" r="2.3" ${BLK} stroke="none"/>`;
+                s += `<path d="M262 232 Q268 228.5 274 232 M290 232 Q296 228.5 302 232" ${thin(1.4)}/>`;
+                s += `<path d="M263 237.5 Q268 236 273 237.5 M291 237.5 Q296 236 301 237.5" ${thin(0.75)}/>`;
+                // Thin semi-rimless rectangular wire frames
+                s += `<path d="M256 234 V229 Q256 226.5 259 226.5 H276 Q279 226.5 279 229 V234 M285 234 V229 Q285 226.5 288 226.5 H305 Q308 226.5 308 229 V234" ${thin(1.45)}/>`;
+                s += `<path d="M257 238 Q268 240.5 278 238 M286 238 Q296 240.5 307 238" ${thin(0.65)}/>`;
+                s += `<path d="M279 229.5 Q282 227.5 285 229.5 M256 229.5 L247 229 M308 229.5 L317 229" ${thin(1.4)}/>`;
             }
-            s += `<path d="M279 230 Q282 227 285 230 M256 230 L248 229 M308 230 L316 229" stroke-width="1.8"/>`;
-            s += `<path d="M282 238 Q279 250 276 254 Q281 259 288 255" stroke-width="2"/>`;
+            s += `<path d="M282 238 Q279.5 247 277 251 Q282 256 287.5 251.5" ${thin(1.75)}/>`;
 
-            // Beard: full and wide, squared off at the bottom
-            const beard = spline([[248, 222], [243, 250], [240, 280], [241, 310], [245, 332], [258, 341], [282, 343], [306, 341], [319, 332], [323, 310], [324, 280], [321, 250], [316, 222], [312, 244], [302, 257], [292, 261], [282, 260], [272, 261], [262, 257], [252, 244]], true, 7);
-            s += `<path d="${fuzz(beard, 0.9, r)}" ${W} stroke-width="2"/>`;
-            // Texture: short wavy strokes flowing down and toward the middle
+            // Beard: fuller/fluffier at the cheeks and jaw, tapering to a softer rounded U-bottom
+            const beard = spline([
+                [248, 228], [242, 252], [238, 278], [242, 302], [254, 318], [268, 326], [282, 328], [296, 326], [310, 318], [322, 302], [326, 278], [322, 252], [316, 228],
+                [311, 248], [303, 259], [294, 261], [282, 260], [270, 261], [261, 259], [253, 248]
+            ], true, 7);
+            s += `<path d="${fuzz(beard, 1.25, r)}" ${W} stroke-width="2"/>`;
+            // Soft flowing beard strands converging gently toward the chin
             let strands = '';
-            for (let row = 0; row < 5; row++) {
-                const y = 280 + row * 12;
-                const half = [34, 37, 38, 37, 34][row];
+            for (let row = 0; row < 4; row++) {
+                const y = 278 + row * 11;
+                const half = [36, 38, 33, 24][row];
                 for (let x = cx - half + 4 + (row % 2) * 5; x < cx + half - 3; x += 10) {
-                    const lean = (cx - x) * 0.12, jy = y + (r() - .5) * 5;
-                    strands += `M${f(x)} ${f(jy)} q${f(lean / 2 - 2)} 5 ${f(lean)} 10 `;
+                    const lean = (cx - x) * 0.14, jy = y + (r() - .5) * 4;
+                    strands += `M${f(x)} ${f(jy)} q${f(lean / 2 - 1.5)} 4.5 ${f(lean)} 9 `;
                 }
             }
-            s += `<path d="${strands}" ${thin(1.1)}/>`;
-            // Mustache + smile
-            s += `<path d="${fuzz(spline([[262, 270], [270, 260], [282, 263], [294, 260], [302, 270], [292, 267], [282, 269], [272, 267]], true, 4), 1.2, r)}" ${W} stroke-width="1.8"/>`;
-            s += `<path d="M269 274 Q282 284 295 274" stroke-width="2.2"/>`;
-            s += `<path d="M271 276 Q282 281 293 276" ${thin(1)}/>`;
+            s += `<path d="${strands}" ${thin(1.05)}/>`;
+            // Full curving mustache seamlessly framing a warm relaxed smile
+            s += `<path d="${fuzz(spline([[258, 271], [267, 258], [282, 260], [297, 258], [306, 271], [295, 266], [282, 267], [269, 266]], true, 4), 1.0, r)}" ${W} stroke-width="1.6"/>`;
+            s += `<path d="M270 270 Q282 277.5 294 270" stroke-width="2"/>`;
+            s += `<path d="M275 276 Q282 278.5 289 276" ${thin(0.95)}/>`;
+
+            if (!w.night && w.temp >= 100 && !w.rain) {
+                // Sweat drop at his temple on 100°F+ days
+                s += `<path d="M308 206 C308 206 304.5 212 304.5 214.5 a3.5 3.5 0 0 0 7 0 C311.5 212 308 206 308 206 Z" ${W} ${thin(1.4)}/>`;
+            }
 
             if (w.umbrella) s += umbrellaHand(w);
             return s;
@@ -831,243 +958,64 @@
             return s;
         }
 
-        // ---------- Easter egg drawings ----------
-
-        function eggArt(egg, w) {
-            switch (egg) {
-                case 'owl':
-                    return `<g transform="translate(200 58)">`
-                        + `<path d="M-12 18 Q-15 -2 -10 -10 L-11 -19 L-4 -13 Q0 -14 4 -13 L11 -19 L10 -10 Q15 -2 12 18 Z" ${W} stroke-width="2.2"/>`
-                        + `<circle cx="-5" cy="-5" r="4.5" ${W} stroke-width="1.6"/><circle cx="5" cy="-5" r="4.5" ${W} stroke-width="1.6"/>`
-                        + `<circle cx="-5" cy="-5" r="1.8" ${BLK}/><circle cx="5" cy="-5" r="1.8" ${BLK}/>`
-                        + `<path d="M-2 1 L0 5 L2 1 Z" ${BLK} stroke-width="1"/>`
-                        + `<path d="M-6 9 q2 2 4 0 M2 9 q2 2 4 0 M-4 14 q2 2 4 0 M-6 18 V22 M6 18 V22" ${thin(1.2)}/></g>`;
-                case 'shootingStar':
-                    return halo(`<path d="M372 24 L282 70" stroke-dasharray="10 5" stroke-width="2"/>`, 5)
-                        + `<path d="M280 62 L282 68 L288 70 L282 72 L280 78 L278 72 L272 70 L278 68 Z" fill="#fff" stroke="#fff" stroke-width="1.5"/>`;
-                case 'ufo':
-                    return `<g transform="translate(46 120)">`
-                        + `<path d="M-14 6 L-34 76 M14 6 L34 76" stroke="#fff" stroke-width="2" stroke-dasharray="4 4"/>`
-                        + `<ellipse cx="0" cy="0" rx="28" ry="8" ${W} stroke-width="2"/>`
-                        + `<path d="M-14 -3 Q-12 -18 0 -18 Q12 -18 14 -3" ${W} stroke-width="2"/>`
-                        + `<circle cx="-14" cy="1" r="1.8" ${BLK}/><circle cx="0" cy="3" r="1.8" ${BLK}/><circle cx="14" cy="1" r="1.8" ${BLK}/></g>`;
-                case 'airplane':
-                    return halo(`<path d="M140 30 H282" stroke-dasharray="6 6" stroke-width="2"/>`, 5)
-                        + `<g transform="translate(300 30)">`
-                        + `<path d="M-16 -2 H12 Q20 -2 22 1 Q20 4 12 4 H-14 L-20 -8 H-16 Z" ${W} stroke-width="2"/>`
-                        + `<path d="M0 0 L-8 12 H-3 L8 1 M-2 -1 L-6 -8 H-2 L4 -1" ${W} stroke-width="1.8"/>`
-                        + `<path d="M6 0 H10 M12 0 h1" ${thin(1.2)}/></g>`;
-                case 'balloon':
-                    return `<g transform="translate(320 70)">`
-                        + `<path d="M0 -34 Q26 -34 26 -8 Q26 12 6 26 H-6 Q-26 12 -26 -8 Q-26 -34 0 -34 Z" ${W} stroke-width="2.2"/>`
-                        + `<path d="M0 -34 Q-12 -8 -5 26 M0 -34 Q12 -8 5 26 M0 -34 V26" ${thin(1.2)}/>`
-                        + `<path d="M-6 26 L-5 36 M6 26 L5 36" ${thin(1.2)}/><rect x="-6" y="36" width="12" height="9" ${W} stroke-width="1.8"/></g>`;
-                case 'geese': {
-                    const bird = (x, y) => `M${x - 6} ${y - 2} Q${x - 3} ${y - 5} ${x} ${y} Q${x + 3} ${y - 5} ${x + 6} ${y - 2}`;
-                    const pts = [[300, 100], [288, 92], [276, 84], [312, 92], [324, 84], [336, 76], [264, 76]];
-                    return halo(`<path d="${pts.map(p => bird(...p)).join(' ')}" stroke-width="2"/>`, 5);
-                }
-                case 'kite':
-                    return `<path d="M318 82 Q360 160 400 210" ${thin(1)}/>`
-                        + `<path d="M318 46 L334 64 L318 90 L302 64 Z" ${W} stroke-width="2.2"/><path d="M318 46 V90 M302 64 H334" ${thin(1.2)}/>`
-                        + `<path d="M318 90 Q308 104 316 116 Q324 128 314 140" ${thin(1.3)}/>`
-                        + [[311, 103], [318, 120], [316, 136]].map(([x, y]) => `<path d="M${x - 4} ${y - 3} L${x + 4} ${y + 3} M${x + 4} ${y - 3} L${x - 4} ${y + 3}" stroke-width="2"/>`).join('');
-                case 'rainbow':
-                    return halo([150, 140, 130].map(rad => `<path d="M${200 - rad} 190 A${rad} ${rad} 0 0 1 ${200 + rad} 190"/>`).join(''), 5);
-                case 'snowman':
-                    return `<g transform="translate(174 ${HORIZON})"><circle cx="0" cy="-12" r="12" ${W}/><circle cx="0" cy="-30" r="8" ${W}/>`
-                        + `<circle cx="-3" cy="-32" r="1.2" ${BLK}/><circle cx="3" cy="-32" r="1.2" ${BLK}/><path d="M0 -29 l6 1 l-6 1" ${thin(1.3)}/>`
-                        + `<path d="M-7 -37 H7 M-4 -37 V-44 H4 V-37" ${W} stroke-width="2"/><path d="M-8 -20 L-18 -26 M8 -20 L18 -26" ${thin(1.6)}/></g>`;
-                case 'catInWindow':
-                    return `<path d="M191 154 V140 Q191 132 196 130 L194 120 L200 126 L206 120 L204 130 Q209 132 209 140 V154 Z" ${BLK} stroke="none"/>`
-                        + `<circle cx="197" cy="134" r="1.2" fill="#fff"/><circle cx="203" cy="134" r="1.2" fill="#fff"/>`;
-                case 'bigfoot': {
-                    const r = rng(7);
-                    const body = spline([[368, 214], [380, 210], [392, 222], [396, 268], [372, 268], [370, 236]], true, 4);
-                    return `<path d="${fuzz(body, 2, r)}" ${BLK} stroke-width="1.5"/>`
-                        + `<circle cx="377" cy="223" r="1.6" fill="#fff"/><circle cx="385" cy="223" r="1.6" fill="#fff"/>`
-                        + `<path d="M356 ${HORIZON} V226" stroke-width="3"/>`;
-                }
-                case 'deer': {
-                    // Buck standing in front of the right-hand tree, facing left (haloed so it reads at night)
-                    const deer = `<path d="M-14 -29 L-16 -14 L-15 0 M-7 -28 L-7 -14 L-6 0 M18 -29 L23 -15 L20 0 M25 -30 L30 -15 L27 0" stroke-width="2.4"/>`
-                        + `<path d="M-19 -1 h-3 M-8 -1 h-3 M18 -1 h-3 M25 -1 h-3" stroke-width="2.4"/>`
-                        + `<path d="M33 -42 Q39 -46 38 -38 Q36 -36 33 -38 Z" ${W} stroke-width="1.8"/>`
-                        + `<path d="M-40 -66 Q-41 -70 -37 -72 L-28 -78 Q-24 -80 -20 -78 Q-16 -74 -14 -66 Q-10 -54 -2 -48 Q10 -46 22 -47 Q32 -48 33 -40 Q34 -30 26 -27 L22 -27 Q6 -24 -10 -27 Q-18 -28 -20 -36 Q-22 -46 -26 -56 Q-30 -64 -34 -64 L-38 -63 Q-41 -63 -40 -66 Z" ${W} stroke-width="2.2"/>`
-                        + `<path d="M-19 -77 Q-12 -84 -7 -82 Q-11 -76 -17 -74 Z" ${W} stroke-width="1.8"/>`
-                        + `<path d="M-23 -79 Q-27 -91 -21 -99 Q-17 -103 -11 -101 M-24 -89 L-31 -94 M-21 -96 L-24 -104 M-19 -80 Q-14 -90 -8 -93 Q-4 -95 -2 -91 M-12 -89 L-13 -97" stroke-width="2"/>`
-                        + `<circle cx="-28" cy="-72" r="1.3" ${BLK}/><circle cx="-39" cy="-67" r="1.6" ${BLK}/>`
-                        + `<path d="M-14 -40 Q-10 -36 -4 -36" ${thin(1)}/>`;
-                    return `<g transform="translate(364 ${HORIZON}) scale(.8)">${halo(deer, 6)}</g>`;
-                }
-                case 'rabbit':
-                    // Sitting bunny by the door
-                    return `<g transform="translate(228 ${HORIZON}) scale(1.4)">`
-                        + `<path d="M-8 0 Q-12 -10 -4 -15 Q4 -18 8 -10 Q10 -4 8 0 Z" ${W} stroke-width="2"/>`
-                        + `<circle cx="-7" cy="-17" r="5.5" ${W} stroke-width="2"/>`
-                        + `<path d="M-9 -21 Q-13 -32 -10 -34 Q-7 -32 -7 -22 M-5 -22 Q-4 -33 -1 -33 Q1 -30 -3 -21" ${W} stroke-width="1.8"/>`
-                        + `<circle cx="-9" cy="-18" r="1" ${BLK}/><circle cx="10" cy="-4" r="2.6" ${W} stroke-width="1.6"/></g>`;
-                case 'blackhawks': {
-                    // Three UH-60s in echelon, flying left: long low cabin, engine hump, tail fin, stabilator
-                    const heli = (x, y) => {
-                        const body = `<path d="M0 2 Q0 -6 8 -9 L20 -12 L30 -12 L34 -18 L52 -18 L56 -12 L60 -10 L96 -7 L100 -17 L106 -17 L104 -4 L96 0 L60 4 Q40 10 10 9 Q0 8 0 2 Z"/>`;
-                        const gear = `<path d="M-14 -23 H94 M43 -18 V-23 M103 -21 V-1 M92 -2 H108 M14 9 V14 M44 8 V14 M90 2 V8"/><circle cx="14" cy="15" r="2.5"/><circle cx="44" cy="15" r="2.5"/><circle cx="90" cy="9" r="1.8"/>`;
-                        return `<g transform="translate(${x} ${y}) scale(.55)">`
-                            + `<g stroke="#fff" stroke-width="9" fill="#fff">${body}${gear}</g>`
-                            + `<g fill="#000" stroke-width="2">${body}</g>`
-                            + `<g stroke-width="2.6" fill="#000">${gear}</g>`
-                            + `<path d="M5 -3 L11 -8 L21 -9 L21 -3 Z M27 -9 H37 V-3 H27 Z" fill="#fff" stroke="none"/></g>`;
-                    };
-                    return heli(150, 30) + heli(220, 52) + heli(290, 74);
-                }
-                case 'cow': {
-                    // Holstein in front of the right-hand tree, facing left
-                    const body = 'M-30 -40 Q-30 -48 -22 -48 H24 Q32 -48 32 -40 V-24 Q32 -16 24 -16 H-22 Q-30 -16 -30 -24 Z';
-                    const cow = `<path d="M32 -44 Q40 -36 37 -20" ${thin(1.8)}/><path d="M35 -22 l2 6 l2 -6 Z" ${BLK} ${thin(1)}/>`
-                        + `<path d="M-24 -18 V0 M-15 -18 V0 M16 -18 V0 M25 -18 V0" stroke-width="3.2"/><path d="M-26 0 h4 M-17 0 h4 M14 0 h4 M23 0 h4" stroke-width="3"/>`
-                        + `<path d="${body}" ${W} stroke-width="2.2"/>`
-                        + `<g clip-path="url(#cowClip)" ${BLK} stroke="none"><ellipse cx="-12" cy="-40" rx="9" ry="6" transform="rotate(-15 -12 -40)"/><ellipse cx="10" cy="-27" rx="10" ry="7"/><ellipse cx="27" cy="-42" rx="7" ry="5"/><ellipse cx="-26" cy="-21" rx="5" ry="4"/></g>`
-                        + `<path d="M8 -16 Q12 -9 18 -16 M11 -13 V-9 M15 -13 V-9" ${W} ${thin(1.4)}/>`
-                        + `<path d="M-38 -45 Q-33 -51 -29 -48 Q-33 -44 -38 -45 Z M-47 -45 Q-53 -48 -55 -43 Q-51 -42 -47 -44 Z" ${W} ${thin(1.4)}/>`
-                        + `<path d="M-41 -48 q-1 -5 3 -7 M-45 -47 q-3 -4 -1 -8" ${thin(1.8)}/>`
-                        + `<path d="M-30 -42 Q-36 -50 -44 -47 L-51 -32 Q-53 -24 -46 -23 Q-38 -23 -35 -30 Q-32 -36 -30 -36 Z" ${W} stroke-width="2"/>`
-                        + `<ellipse cx="-46" cy="-27" rx="6.5" ry="4.5" ${W} ${thin(1.6)}/><circle cx="-48.5" cy="-27" r="1" ${BLK}/><circle cx="-44" cy="-27" r="1" ${BLK}/>`
-                        + `<circle cx="-40" cy="-39" r="1.5" ${BLK}/>`;
-                    return `<defs><clipPath id="cowClip"><path d="${body}"/></clipPath></defs><g transform="translate(366 ${HORIZON}) scale(.8)">${halo(cow, 6)}</g>`;
-                }
-                case 'armadillo':
-                    // Trundling past the door, snout to the left: banded middle, dotted shields, tapered tail
-                    return `<g transform="translate(194 ${HORIZON}) scale(1.3)">`
-                        + `<path d="M13 -4 Q22 -3 29 1 Q21 0 13 -1 Z" ${W} ${thin(1.3)}/><path d="M-9 -1 V1.5 M-4 -1 V1.5 M5 -1 V1.5 M10 -1 V1.5" stroke-width="2.2"/>`
-                        + `<path d="M-15 0 Q-15 -14 0 -14 Q15 -14 15 0 Z" ${W} stroke-width="2"/>`
-                        + `<path d="M-5 -13.2 Q-6 -6 -5.5 0 M-1.5 -13.9 V0 M2 -13.9 V0 M5.5 -13.2 Q6.5 -6 6 0" ${thin(1)}/>`
-                        + `<g ${BLK} stroke="none">${[[-10, -8], [-12, -3.5], [-8, -4], [-8.5, -10], [10, -8], [12, -3.5], [8.5, -4], [9, -10]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r=".8"/>`).join('')}</g>`
-                        + `<path d="M-16 -9 L-17 -15 L-13 -10" ${W} ${thin(1.2)}/>`
-                        + `<path d="M-13 -9 Q-17 -9 -27 -2 Q-27 0 -25 0 H-13 Z" ${W} stroke-width="1.6"/><circle cx="-18" cy="-5" r=".8" ${BLK}/></g>`;
-                default:
-                    return '';
-            }
-        }
-
-        // ---------- Holiday + new egg drawings ----------
-
-        // US flag on a yard pole right of the house (behind the tree); half = half-staff
-        function usFlag(half) {
-            const px = 342, H = 32 / 13;
-            const shape = 'M0 0 Q12.5 -4 25 0 T50 0 V32 Q37.5 36 25 32 T0 32 Z';
-            const wave = (y) => `M0 ${f(y)} Q12.5 ${f(y - 4)} 25 ${f(y)} T50 ${f(y)}`;
-            let red = '', stars = '';
-            for (let i = 0; i < 13; i += 2) red += wave(H * (i + 0.5)) + ' ';
-            for (let i = 0; i < 4; i++) for (let j = 0; j < 5; j++) {
-                const x = 2.4 + j * 3.9 + (i % 2) * 1.3, y = 2.4 + i * 4.1 - 8 * (x / 25) * (1 - x / 25);
-                stars += `<circle cx="${f(x)}" cy="${f(y)}" r="0.9"/>`;
-            }
-            return `<defs><clipPath id="flagClip"><path d="${shape}"/></clipPath><clipPath id="cantonClip"><rect x="0" y="-6" width="21" height="40"/></clipPath></defs>`
-                + halo(`<path d="M${px} ${HORIZON} V88"/>`, 6) + `<circle cx="${px}" cy="86" r="3" ${W} ${thin(1.6)}/>`
-                + `<g transform="translate(${px} ${half ? 138 : 96})"><path d="${shape}" ${W} stroke="#fff" stroke-width="5"/>`
-                + `<g clip-path="url(#flagClip)"><path d="${red}" stroke-width="${f(H)}" stroke-linecap="butt"/>`
-                + `<g clip-path="url(#cantonClip)"><path d="${wave(8.6)}" stroke-width="17.6" stroke-linecap="butt"/></g>`
-                + `<g fill="#fff" stroke="none">${stars}</g></g><path d="${shape}" ${thin(1.6)}/></g>`;
-        }
-
-        // Black with a white edge on day skies, solid white at night (lit)
-        const bat = (x, y, s, lit) => `<path transform="translate(${f(x)} ${f(y)}) scale(${f(s)})" d="M0 -2 L-1.5 -4 L-1 -1 Q-4 -4 -8 -3 Q-11 -4 -13 -1 Q-10 -1 -9 2 Q-7 0 -5 2 Q-3 0 0 3 Q3 0 5 2 Q7 0 9 2 Q10 -1 13 -1 Q11 -4 8 -3 Q4 -4 1 -1 L1.5 -4 Z" ${lit ? 'fill="#fff" stroke="none"' : `${BLK} stroke="#fff" stroke-width="${f(0.8 / s)}"`}/>`;
-        const heart = (x, y, s) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 6 C-8 0 -10 -6 -5 -9 C-2 -11 0 -9 0 -7 C0 -9 2 -11 5 -9 C10 -6 8 0 0 6 Z" ${BLK} stroke="#fff" stroke-width="${f(1.5 / s)}"/>`;
-
-        // Decorated eggs hidden in the grass
-        function easterEggs() {
-            const deco = [
-                `<path d="M-5 0 l2 -2.5 l2 2.5 l2 -2.5 l2 2.5 l2 -2.5" ${thin(1.3)}/>`,
-                `<path d="M-4.4 -3 H4.4 M-4.4 3 H4.4" stroke-width="2"/>`,
-                `<g ${BLK} stroke="none"><circle cx="0" cy="-3.5" r="1.1"/><circle cx="-2.4" cy="0.5" r="1.1"/><circle cx="2.4" cy="0.5" r="1.1"/><circle cx="0" cy="4" r="1.1"/></g>`,
-                `<path d="M-5 0 H5" stroke="#fff" stroke-width="2"/>`
-            ];
-            return [[178, 284, -15, 0], [198, 294, 12, 2], [218, 286, -8, 1], [24, 286, 10, 3], [48, 293, -12, 0], [348, 288, 8, 1], [372, 296, -10, 2], [386, 280, 6, 3]]
-                .map(([x, y, a, k]) => `<g transform="translate(${x} ${y}) rotate(${a})"><ellipse rx="5.2" ry="6.8" ${k === 3 ? BLK : W} ${thin(1.6)}/>${deco[k]}</g>`).join('');
-        }
-
-        // Groundhog Day: out of his hole, with a shadow if the sun is out
-        function groundhog(w) {
-            let s = w.sunVisible ? `<path d="M205 277 Q220 274 234 278 Q220 282 205 280 Z" ${BLK} stroke="none"/>` : '';
-            s += `<ellipse cx="186" cy="277" rx="15" ry="4.5" ${BLK}/>`;
-            return s + `<g transform="translate(186 276)">`
-                + `<circle cx="-6" cy="-26" r="2.8" ${W} ${thin(1.4)}/><circle cx="6" cy="-26" r="2.8" ${W} ${thin(1.4)}/>`
-                + `<path d="M-10 0 Q-12 -17 -7 -25 Q0 -32 7 -25 Q12 -17 10 0 Z" ${W} stroke-width="2"/>`
-                + `<circle cx="-3.2" cy="-21" r="1.3" ${BLK}/><circle cx="3.2" cy="-21" r="1.3" ${BLK}/><ellipse cx="0" cy="-17" rx="2" ry="1.4" ${BLK}/>`
-                + `<path d="M-1.4 -15 h2.8 v2.6 h-2.8 Z M0 -15 v2.6" ${W} ${thin(0.9)}/><path d="M-7 -8 q2.5 2 5 0 M2 -8 q2.5 2 5 0" ${thin(1.4)}/></g>`;
-        }
-
-        function turkey() {
-            let t = '';
-            for (let i = 0; i < 9; i++) {
-                t += `<g transform="translate(8 -26) rotate(${-80 + i * 20})"><path d="M0 -6 Q-6 -16 -4 -28 Q0 -33 4 -28 Q6 -16 0 -6 Z" ${W} ${thin(1.8)}/><path d="M-3 -24 Q0 -27 3 -24" stroke-width="2.6"/></g>`;
-            }
-            t += `<path d="M-2 -7 V0 M7 -7 V0 M-6 0 h6 M3 0 h7" stroke-width="2"/>`
-                + `<path d="M-14 -18 Q-14 -34 2 -34 Q18 -34 18 -18 Q18 -6 2 -6 Q-14 -6 -14 -18 Z" ${W} stroke-width="2"/>`
-                + `<path d="M0 -26 q6 4 12 0 M2 -19 q6 4 12 0" ${thin(1.2)}/>`
-                + `<path d="M-8 -24 Q-18 -32 -16 -44 L-10 -44 Q-12 -34 -4 -28 Z" ${W} stroke-width="1.8"/>`
-                + `<circle cx="-14" cy="-47" r="4.5" ${W} stroke-width="1.8"/><path d="M-18 -48 l-5 1.5 l5 1.5 Z" ${W} ${thin(1.2)}/>`
-                + `<path d="M-17.5 -44 q-3 5 0 10" stroke-width="2.6"/><circle cx="-13" cy="-48.5" r="1" ${BLK}/>`;
-            return `<g transform="translate(350 ${HORIZON})">${halo(t, 6)}</g>`;
-        }
-
-        function fireworks() {
-            const burst = (cx, cy, rad) => Array.from({ length: 10 }, (_, i) => {
-                const a = i * Math.PI / 5, c = Math.cos(a), s = Math.sin(a);
-                return `M${f(cx + rad * .35 * c)} ${f(cy + rad * .35 * s)} L${f(cx + rad * c)} ${f(cy + rad * s)}`;
-            }).join(' ');
-            return `<path d="${burst(150, 40, 22)} ${burst(320, 90, 18)} ${burst(250, 26, 14)}" stroke="#fff" stroke-width="2"/>`;
-        }
-
         // ---------- Compose ----------
 
         // look: optional overrides for previews, e.g. { swim: true, shirt: 'apple' }
         function drawScene(w, egg, now, look = {}) {
             const r = rng(42);
             const season = seasonal(now);
-            // Outfit rolls, stable for the day: occasional swimsuits on hot days and an occasional print on his tee
-            const lp = localParts(now), roll = rng(hash(`look-${lp.year}-${lp.month}-${lp.day}`)), r1 = roll(), r2 = roll(), r3 = roll();
-            season.swim = look.swim ?? (w.tier === 'tank' && r1 < SWIM_CHANCE);
+            // Outfit rolls, stable for the day: occasional swimsuits on hot sunny days, shirt prints, and her top patterns
+            const lp = localParts(now), roll = rng(hash(`look-${lp.year}-${lp.month}-${lp.day}`));
+            const r1 = roll(), r2 = roll(), r3 = roll(), r4 = roll(), r5 = roll();
+            season.swim = look.swim ?? (w.tier === 'tank' && w.sunVisible && !w.rain && !w.thunder && r1 < SWIM_CHANCE);
             season.shirt = look.shirt ?? (r2 < SHIRT_CHANCE ? SHIRTS[Math.floor(r3 * SHIRTS.length)] : 'plain');
+            season.herLook = look.her ?? (r4 < HER_CHANCE ? HER_LOOKS[Math.floor(r5 * HER_LOOKS.length)] : 'plain');
+            // Stable hourly facing direction (+1 left, -1 right) for animals
+            const dir = look.dir ?? (rng(hash(`dir-${lp.year}-${lp.month}-${lp.day}-${lp.hour}`))() < 0.5 ? 1 : -1);
             // Lift the umbrella to clear tall hats
             const canopyDy = [hatFor('her', w, season, egg), hatFor('him', w, season, egg)].some(h => h && h !== 'beanie') ? -24 : 0;
             let s = '';
 
             if (w.night) s += `<rect x="0" y="0" width="400" height="${HORIZON}" ${BLK} stroke="none"/>`;
-            if (egg === 'rainbow') s += eggArt(egg, w);
+            if (egg === 'rainbow') s += ex('eggArt', egg, w, dir);
 
             // Sky
             if (w.night) {
-                if (w.sky !== 'overcast' && w.sky !== 'cloudy') s += stars(rng(7));
-                if (w.sky !== 'overcast') s += moon(62, 58, now, w);
-                if (season.fireworks) s += fireworks();
+                if (w.sky !== 'overcast' && w.sky !== 'cloudy' && w.sky !== 'fog') s += stars(rng(7));
+                if (w.sky !== 'overcast' && w.sky !== 'fog') s += moon(62, 58, now, w);
+                if (season.fireworks) s += ex('fireworks');
             } else if (w.sunVisible) {
                 s += sun(62, 58);
             }
-            if (['airplane', 'balloon', 'geese', 'kite', 'shootingStar', 'ufo'].includes(egg)) s += eggArt(egg, w);
+            if (['airplane', 'balloon', 'geese', 'kite', 'shootingStar', 'ufo'].includes(egg)) s += ex('eggArt', egg, w, dir);
             s += clouds(w);
-            if (season.flag) s += usFlag(season.flag === 'half');
-            if (season.valentine) s += heart(250, 40, 1.6) + heart(312, 84, 1.1) + heart(172, 28, 1) + heart(124, 104, 0.8) + heart(372, 28, 0.9);
-            if (season.halloween) s += [[140, 34, 1.3], [176, 66, 1], [300, 36, 1.2], [338, 76, 0.9], [252, 24, 0.8]].map(([x, y, k]) => bat(x, y, k, w.night)).join('');
-            if (egg === 'blackhawks') s += eggArt(egg, w);
-            if (w.thunder && w.rain) s += bolt;
-            if (w.windy) s += windLines();
+            if (season.flag) s += ex('usFlag', season.flag === 'half');
+            if (season.valentine) {
+                // Keep hearts clear of chimney smoke (x~251) and typical clouds
+                const hx = w.tier === 'coat' ? 286 : 256;
+                s += ex('heart', hx, 38, 1.5) + ex('heart', 336, 86, 1.1) + ex('heart', 140, 42, 1.05) + ex('heart', 104, 114, 0.85) + ex('heart', 374, 34, 0.9);
+            }
+            if (season.halloween) s += [[140, 34, 1.3], [176, 66, 1], [300, 36, 1.2], [338, 76, 0.9], [252, 24, 0.8]].map(([x, y, k]) => ex('bat', x, y, k, w.night)).join('');
+            if (egg === 'blackhawks') s += ex('eggArt', egg, w, dir);
+            if (w.thunder && w.rain) s += bolt(w.night);
+            if (w.windy) s += windLines(w, season, egg);
 
             // Farm
             s += farm(w, r, season, egg);
-            if (['owl', 'catInWindow', 'snowman', 'bigfoot', 'deer', 'rabbit', 'cow', 'armadillo'].includes(egg)) s += eggArt(egg, w);
-            if (season.easter) s += easterEggs() + eggArt('rabbit', w);
-            if (season.groundhog) s += groundhog(w);
-            if (season.thanksgiving) s += turkey();
-            if (season.stPatrick) s += [[176, 286, 1], [216, 296, 0.9], [30, 290, 1], [56, 282, 0.8], [350, 290, 1], [380, 284, 0.8]].map(p => shamrock(...p)).join('');
+            if (!w.night && w.temp >= 100 && !w.rain && !w.fog) s += heatShimmer();
+            if (['owl', 'catInWindow', 'snowman', 'deer', 'rabbit', 'cow', 'armadillo'].includes(egg)) s += ex('eggArt', egg, w, dir);
+            if (season.easter) s += ex('easterEggs') + ex('eggArt', 'rabbit', w, dir);
+            if (season.groundhog) s += ex('groundhog', w);
+            if (season.thanksgiving) s += ex('turkey', dir);
+            if (season.stPatrick) s += [[178, 294, 1.1], [218, 302, 0.95], [22, 296, 1.05], [52, 286, 0.85], [348, 296, 1.05], [380, 288, 0.85]].map(p => shamrock(...p)).join('');
             if (w.fog) s += fogLines();
 
             // Precip (behind us, kept out from under the umbrella)
             if (w.rain) {
                 s += `<defs><mask id="dry"><rect width="400" height="480" fill="#fff"/><path d="M36 ${182 + canopyDy} H364 V480 H36 Z" fill="#000"/></mask></defs>`;
-                s += `<g mask="${w.umbrella ? 'url(#dry)' : ''}">${rainLines(rng(11))}</g>`;
+                s += `<g mask="${w.umbrella ? 'url(#dry)' : ''}">${rainLines(rng(11), w.night)}</g>`;
             }
-            if (w.snow) s += snowflakes(rng(13));
+            if (w.snow) s += snowflakes(rng(13), w.night);
 
             // Us
             s += her(w, rng(5), season, egg);
@@ -1084,6 +1032,8 @@
 
         return {
             TZ, asNumber, probPct, localParts, getPeriods, pickPeriod, analyze, pickEgg, f, drawScene,
+            svg: { f, rng, spline, fuzz, W, BLK, thin, halo, HORIZON },
+            addExtras: (m) => Object.assign(extras, m),
             // For scripts/preview-scene.js
             EGG_NAMES: Object.keys(EGGS), nthWeekday, easter
         };
@@ -1091,6 +1041,321 @@
 </script>
 
 <!-- trmnl:split  (scripts/push-trmnl.py: above -> markup_shared, below -> markup_full) -->
+
+<script id="scene-extras">
+    // Easter-egg, holiday, and alternate-house drawings (kept below trmnl:split to balance the 64 KB slot budgets).
+    ; (() => {
+        if (!window.FunWeather) return;
+        const { f, rng, spline, fuzz, W, BLK, thin, halo, HORIZON } = window.FunWeather.svg;
+
+        // Battlement top edge from x0 to x1 at height y (merlons stick up by h)
+        const crenels = (x0, x1, y, n, h = 7) => {
+            const step = (x1 - x0) / (2 * n - 1);
+            let d = `M${x0} ${y + h}`;
+            for (let i = 0; i < 2 * n - 1; i++) {
+                const x = f(x0 + i * step);
+                d += i % 2 ? ` V${y + h} H${f(x + step)}` : ` V${y} H${f(x + step)}`;
+            }
+            return d + ` V${y + h}`;
+        };
+
+        // Easter egg house: a castle with a keep, two round-roofed towers, pennants and a portcullis
+        function castle(w) {
+            let s = '';
+            for (const [x, flip] of [[112, 1], [250, -1]]) {
+                s += `<path d="${crenels(x - 4, x + 42, 100, 4)} V${HORIZON} H${x - 4} Z" ${W}/>`;
+                s += `<path d="M${x - 2} 100 L${x + 19} 52 L${x + 40} 100 Z" ${W}/>`;
+                s += `<path d="M${x + 19} 52 V34 l${12 * flip} 4 l${-12 * flip} 4" ${W} ${thin(1.8)}/>`;
+                s += `<rect x="${x + 16}" y="126" width="6" height="16" rx="3" ${BLK} ${thin(1.3)}/>`;
+                s += `<path d="M${x - 4} 110 H${x + 42}" ${thin(1.4)}/>`;
+            }
+            s += `<path d="${crenels(150, 250, 128, 6)} V${HORIZON} H150 Z" ${W}/>`;
+            let st = '';
+            for (let y = 150; y < HORIZON; y += 14) for (let x = 156 + (y / 14 % 2) * 9; x < 244; x += 30) st += `M${x} ${y} h10 `;
+            for (const x of [118, 256]) for (let y = 160; y < HORIZON; y += 18) st += `M${x + (y % 36 ? 6 : 16)} ${y} h10 `;
+            s += `<path d="${st}" ${thin(1)}/>`;
+            s += `<path d="M193 176 V162 Q193 154 200 154 Q207 154 207 162 V176 Z" ${w.night ? BLK : W} ${thin(1.8)}/>`;
+            s += `<path d="M180 ${HORIZON} V212 Q180 192 200 192 Q220 192 220 212 V${HORIZON}" ${W} stroke-width="3"/>`;
+            s += `<path d="M186 ${HORIZON} V204 M193 ${HORIZON} V196 M200 ${HORIZON} V194 M207 ${HORIZON} V196 M214 ${HORIZON} V204 M182 214 H218 M181 230 H219 M181 246 H219" ${thin(1.6)}/>`;
+            return s;
+        }
+
+        // Easter egg house: the Alamo's chapel facade (the famous hump, paired columns, niches)
+        function alamo(w) {
+            const top = 'M116 150 H150 Q157 150 159 142 Q163 128 176 126 Q187 124 189 112 Q192 100 200 100 Q208 100 211 112 Q213 124 224 126 Q237 128 241 142 Q243 150 250 150 H284';
+            let s = `<path d="${top} V${HORIZON} H116 Z" ${W}/>`;
+            s += `<path d="M112 150 H288 M114 194 H286" stroke-width="3"/>`;
+            let st = '';
+            for (let y = 162; y < HORIZON; y += 13) for (let x = 122 + (y % 2) * 8; x < 278; x += 26) if (x < 162 || x > 236) st += `M${x} ${y} h8 `;
+            s += `<path d="${st}" ${thin(1)}/>`;
+            for (const x of [164, 174, 226, 236]) {
+                s += `<rect x="${x - 2.5}" y="198" width="5" height="${HORIZON - 198}" ${W} ${thin(1.4)}/><path d="M${x - 4} 198 H${x + 4}" stroke-width="2"/>`;
+            }
+            for (const x of [170, 230]) s += `<rect x="${x - 2.5}" y="154" width="5" height="38" ${W} ${thin(1.4)}/>`;
+            const niche = (x, y) => `<path d="M${x - 7} ${y + 26} V${y + 8} Q${x - 7} ${y} ${x} ${y} Q${x + 7} ${y} ${x + 7} ${y + 8} V${y + 26} Z" ${W} ${thin(1.6)}/><path d="M${x - 9} ${y + 28} H${x + 9}" ${thin(1.6)}/>`;
+            s += niche(144, 206) + niche(256, 206) + niche(144, 158) + niche(256, 158);
+            s += `<path d="M194 186 V172 Q194 164 200 164 Q206 164 206 172 V186 Z" ${BLK} stroke-width="2"/>`;
+            s += `<path d="M186 ${HORIZON} V222 Q186 206 200 206 Q214 206 214 222 V${HORIZON}" ${BLK} stroke-width="2.5"/>`;
+            s += `<path d="M182 ${HORIZON} V222 Q182 202 200 202 Q218 202 218 222 V${HORIZON}" ${thin(1.6)}/>`;
+            return s;
+        }
+
+        // ---------- Easter egg drawings ----------
+
+        function eggArt(egg, w, dir = 1) {
+            const tuft = (x, y) => `<path d="M${x - 7} ${y + 1} l2.5 -4.5 l2.5 4.5 M${x + 2} ${y + 1} l2.5 -4 l2.5 4" ${thin(1.2)}/>`;
+            switch (egg) {
+                case 'owl':
+                    // Great horned owl perched squarely on the farmhouse gable peak
+                    return `<g transform="translate(200 76)">`
+                        + `<path d="M-11 -4 Q-17 -14 -12 -26 Q-13 -32 -9 -35 L-11 -42 L-4 -36 Q0 -38 4 -36 L11 -42 L9 -35 Q13 -32 12 -26 Q17 -14 11 -4 Q7 1 0 1 Q-7 1 -11 -4 Z" ${W} stroke="#000" stroke-width="2"/>`
+                        + `<path d="M-12 -24 Q-17 -14 -12 -4 Q-9 -12 -9 -22 M12 -24 Q17 -14 12 -4 Q9 -12 9 -22" ${W} ${thin(1.5)}/>`
+                        + `<circle cx="-5.2" cy="-27" r="4.8" ${W} ${thin(1.5)}/><circle cx="5.2" cy="-27" r="4.8" ${W} ${thin(1.5)}/>`
+                        + `<circle cx="-5.2" cy="-27" r="2.2" ${BLK} stroke="none"/><circle cx="5.2" cy="-27" r="2.2" ${BLK} stroke="none"/>`
+                        + `<circle cx="-4.3" cy="-28" r="0.8" fill="#fff" stroke="none"/><circle cx="6.1" cy="-28" r="0.8" fill="#fff" stroke="none"/>`
+                        + `<path d="M-2.2 -22.5 L0 -17.5 L2.2 -22.5 Z" ${BLK} ${thin(0.8)}/>`
+                        + `<path d="M-6 -14 q2 2.2 4 0 M2 -14 q2 2.2 4 0 M-4 -9 q2 2.2 4 0 M0 -9 q2 2.2 4 0 M-5 -4 q2 2 4 0 M1 -4 q2 2 4 0" ${thin(1.1)}/>`
+                        + `<path d="M-5 0 l-2 4 M-3 0 l0 4 M3 0 l0 4 M5 0 l2 4" stroke="#fff" stroke-width="3.2"/>`
+                        + `<path d="M-5 0 l-2 4 M-3 0 l0 4 M3 0 l0 4 M5 0 l2 4" ${thin(1.5)}/></g>`;
+                case 'shootingStar':
+                    // Bold sweeping meteor with tapered glowing tail, parallel dust streaks, sparks, and bright star head
+                    return `<g stroke="none" fill="#fff">`
+                        + `<path d="M386 16 L262 76 L266 84 Z"/>`
+                        + `<circle cx="332" cy="34" r="1.4"/><circle cx="304" cy="48" r="1.6"/><circle cx="352" cy="40" r="1.2"/><circle cx="284" cy="86" r="1.4"/></g>`
+                        + `<path d="M370 15 L292 54 M376 31 L306 67" stroke="#fff" ${thin(1.4)} stroke-dasharray="14 6"/>`
+                        + `<path d="M254 68 L257.5 76.5 L266 80 L257.5 83.5 L254 92 L250.5 83.5 L242 80 L250.5 76.5 Z" fill="#fff" stroke="#000" stroke-width="1.2"/>`;
+                case 'ufo':
+                    // Classic tilted retro flying saucer in open right sky with glowing alien dome & ringed tractor beam
+                    return `<g transform="translate(316 68)">`
+                        + `<path d="M-12 8 L-42 96 M12 8 L42 96" stroke="#fff" stroke-width="1.6" stroke-dasharray="6 4"/>`
+                        + `<path d="M-16 28 Q0 34 16 28 M-23 50 Q0 58 23 50 M-30 72 Q0 82 30 72" stroke="#fff" ${thin(1.4)} stroke-dasharray="8 4"/>`
+                        + `<circle cx="-6" cy="42" r="1.4" fill="#fff" stroke="none"/><circle cx="9" cy="62" r="1.6" fill="#fff" stroke="none"/><circle cx="-12" cy="80" r="1.2" fill="#fff" stroke="none"/>`
+                        + `<g transform="rotate(-8)">`
+                        + `<ellipse cx="0" cy="6" rx="16" ry="4.5" ${W} stroke="#000" stroke-width="1.8"/>`
+                        + `<ellipse cx="0" cy="0" rx="33" ry="9" ${W} stroke="#000" stroke-width="2.2"/>`
+                        + `<path d="M-31 1 Q0 8 31 1" ${thin(1.2)}/>`
+                        + `<path d="M-15 -2 Q-14 -21 0 -21 Q14 -21 15 -2 Q0 2 -15 -2 Z" ${W} stroke="#000" stroke-width="2"/>`
+                        + `<path d="M-4 -4 Q-5 -13 0 -14 Q5 -13 4 -4 Z" ${BLK} stroke="none"/>`
+                        + `<ellipse cx="-2" cy="-10" rx="1.4" ry="1" transform="rotate(15 -2 -10)" fill="#fff" stroke="none"/>`
+                        + `<ellipse cx="2" cy="-10" rx="1.4" ry="1" transform="rotate(-15 2 -10)" fill="#fff" stroke="none"/>`
+                        + `<path d="M-9 -15 Q-5 -18 0 -18" ${thin(1)}/>`
+                        + `<circle cx="-22" cy="1" r="2" ${BLK}/><circle cx="-11" cy="3.5" r="2" ${BLK}/><circle cx="0" cy="4.2" r="2" ${BLK}/><circle cx="11" cy="3.5" r="2" ${BLK}/><circle cx="22" cy="1" r="2" ${BLK}/>`
+                        + `</g></g>`;
+                case 'airplane':
+                    // Detailed passenger jetliner with cockpit, cabin windows, swept wings, engine pod, tail stripe & contrail
+                    return halo(`<path d="M124 31 H272 M152 28 H268" stroke-dasharray="10 6 4 6" stroke-width="1.4"/>`, 4)
+                        + `<g transform="translate(302 30)">`
+                        + `<path d="M-2 -3 L-10 -13 H-5 L6 -3 Z" ${W} ${thin(1.5)}/>`
+                        + `<path d="M-24 -2 H14 Q24 -2 28 1.5 Q24 5 14 5 H-18 L-26 -10 H-20 L-14 -2 Z" ${W} stroke-width="1.9"/>`
+                        + `<path d="M-23 -8 l4 6" ${thin(1.3)}/>`
+                        + `<path d="M2 2 L-9 15 H-3 L11 3 Z" ${W} ${thin(1.7)}/>`
+                        + `<rect x="-3" y="7" width="8" height="3.6" rx="1.6" ${W} ${thin(1.3)}/>`
+                        + `<path d="M18 -0.8 H23.5 L22 1.8 H18 Z" ${BLK} stroke="none"/>`
+                        + `<g ${BLK} stroke="none">${[-11, -7, -3, 1, 5, 9, 13].map(x => `<circle cx="${x}" cy="0.5" r="0.95"/>`).join('')}</g></g>`;
+                case 'balloon':
+                    // Ornate vintage hot-air balloon with ribbed gores, checkered belt, scalloped bunting, burner glow & woven basket
+                    return `<g transform="translate(320 68)">`
+                        + `<path d="M0 -36 Q28 -36 28 -8 Q28 12 8 27 H-8 Q-28 12 -28 -8 Q-28 -36 0 -36 Z" ${W} stroke-width="2"/>`
+                        + `<path d="M0 -36 Q-14 -8 -5.5 27 M0 -36 Q14 -8 5.5 27 M0 -36 V27" ${thin(1.1)}/>`
+                        + `<path d="M-27 -13 Q0 -8 27 -13 M-27 -3 Q0 2 27 -3" ${thin(1.3)}/>`
+                        + `<path d="M-25 -12 l5 10 l6 -10 l6 10 l6 -10 l6 10 l6 -10 l5 10 l5 -10" ${thin(1.3)}/>`
+                        + `<path d="M-26 2 Q-20 8 -14 3 Q-7 9 0 4 Q7 9 14 3 Q20 8 26 2" ${thin(1.2)}/>`
+                        + `<path d="M-9 27 H9 L7 30 H-7 Z" ${W} ${thin(1.4)}/>`
+                        + `<path d="M0 31 Q-2.2 33.5 0 36 Q2.2 33.5 0 31 Z" ${BLK} stroke="none"/>`
+                        + `<path d="M-6 30 L-5 39 M6 30 L5 39 M-3 30 L3 39 M3 30 L-3 39" ${thin(1)}/>`
+                        + `<rect x="-7.5" y="39" width="15" height="10" rx="1.5" ${W} ${thin(1.7)}/>`
+                        + `<path d="M-7.5 42.5 H7.5 M-7.5 46 H7.5 M-2.5 39 V49 M2.5 39 V49" ${thin(0.9)}/>`
+                        + `<circle cx="-9" cy="45" r="1.5" ${W} ${thin(1.1)}/><circle cx="9" cy="45" r="1.5" ${W} ${thin(1.1)}/></g>`;
+                case 'geese': {
+                    // V-formation of illustrated flying Canada geese with stretched necks, bodies & alternating wingbeats
+                    const goose = (x, y, k, up) => {
+                        const body = `<path d="M-11 0 Q-5 -2 2 -1 L9 -2.5 L12 -2 L9 -0.5 L2 1.5 Q-5 2 -11 0 Z" ${BLK} stroke="none"/>`;
+                        const wing = up
+                            ? `<path d="M-3 -1 Q-1 -11 5 -13 Q2 -6 2 -1 Z M-1 -1 Q-5 -9 -9 -10 Q-5 -4 -2 0 Z" ${BLK} stroke="none"/>`
+                            : `<path d="M-2 0 Q1 -7 6 -8 Q3 -3 2 0 Z M-3 1 Q-2 8 3 10 Q1 5 1 1 Z" ${BLK} stroke="none"/>`;
+                        return `<g transform="translate(${x} ${y}) scale(${k})">${body}${wing}</g>`;
+                    };
+                    const flock = [
+                        [298, 98, 1.05, true], [280, 90, 0.92, false], [264, 83, 0.82, true], [250, 77, 0.72, false],
+                        [316, 89, 0.92, false], [333, 81, 0.82, true], [348, 74, 0.72, false]
+                    ].map(p => goose(...p)).join('');
+                    return `<g stroke="#fff" stroke-width="3.5" fill="#fff">${flock}</g>${flock}`;
+                }
+                case 'kite': {
+                    // Sculpted patterned diamond kite with bridle, sweeping wind-bowed string, and 4 bowtie ribbons
+                    const bow = (x, y, a) => `<g transform="translate(${x} ${y}) rotate(${a})"><path d="M0 0 L-5.5 -3.5 Q-6.5 0 -5.5 3.5 Z M0 0 L5.5 -3.5 Q6.5 0 5.5 3.5 Z" ${W} ${thin(1.3)}/><circle cx="0" cy="0" r="1.3" ${BLK} stroke="none"/></g>`;
+                    return `<path d="M318 66 Q356 146 400 206" ${thin(1)}/>`
+                        + `<path d="M318 42 Q328 53 336 64 Q326 78 318 92 Q310 78 300 64 Q308 53 318 42 Z" ${W} stroke-width="2"/>`
+                        + `<path d="M318 42 L336 64 H318 Z M318 64 L300 64 L318 92 Z" ${BLK} stroke="none" opacity="0.9"/>`
+                        + `<path d="M318 42 V92 M300 64 H336 M318 42 Q328 53 336 64 Q326 78 318 92 Q310 78 300 64 Q308 53 318 42 Z" ${thin(1.4)}/>`
+                        + `<path d="M318 92 Q306 105 316 118 Q326 131 312 145 Q306 151 312 158" ${thin(1.3)}/>`
+                        + bow(311, 104, -22) + bow(318, 120, 18) + bow(316, 138, -16) + bow(310, 152, 24);
+                }
+                case 'rainbow':
+                    return halo([178, 168, 158].map(rad => `<path d="M${200 - rad} 188 A${rad} ${rad} 0 0 1 ${200 + rad} 188"/>`).join(''), 5);
+                case 'snowman':
+                    return `<g transform="translate(198 ${HORIZON + 14}) scale(1.12)"><circle cx="0" cy="-12" r="12" ${W}/><circle cx="0" cy="-30" r="8" ${W}/>`
+                        + `<circle cx="-3" cy="-32" r="1.2" ${BLK}/><circle cx="3" cy="-32" r="1.2" ${BLK}/><path d="M0 -29 l6 1 l-6 1" ${thin(1.3)}/>`
+                        + `<circle cx="0" cy="-16" r="1.3" ${BLK}/><circle cx="0" cy="-10" r="1.3" ${BLK}/>`
+                        + `<path d="M-7 -37 H7 M-4 -37 V-44 H4 V-37" ${W} stroke-width="2"/><path d="M-8 -20 L-18 -26 M8 -20 L18 -26" ${thin(1.6)}/></g>`;
+                case 'catInWindow':
+                    return `<path d="M191 154 V140 Q191 132 196 130 L194 120 L200 126 L206 120 L204 130 Q209 132 209 140 V154 Z" ${BLK} ${w.night ? 'stroke="#fff" stroke-width="1.4"' : 'stroke="none"'}/>`
+                        + `<circle cx="197" cy="134" r="1.3" fill="#fff" stroke="none"/><circle cx="203" cy="134" r="1.3" fill="#fff" stroke="none"/>`;
+                case 'deer': {
+                    // Illustrated white-tailed buck in the right meadow grass, facing either direction
+                    const deer = `<path d="M-15 -29 L-18 -13 L-15 -1 M-8 -27 L-9 -12 L-6 -1 M18 -29 L24 -14 L20 -1 M25 -30 L31 -14 L27 -1" stroke-width="2.1"/>`
+                        + `<path d="M-18 -1 h4 M-9 -1 h4 M17 -1 h4 M24 -1 h4" stroke-width="2.6"/>`
+                        + `<path d="M33 -42 Q42 -48 41 -37 Q38 -34 33 -37 Z" ${W} ${thin(1.7)}/>`
+                        + `<path d="M-41 -68 Q-43 -72 -38 -74 L-28 -80 Q-23 -83 -18 -80 Q-14 -75 -13 -65 Q-10 -53 0 -48 Q12 -46 24 -48 Q34 -49 35 -39 Q36 -29 27 -26 L21 -26 Q6 -23 -11 -26 Q-19 -28 -21 -37 Q-22 -48 -26 -58 Q-30 -65 -35 -64 L-39 -64 Q-42 -64 -41 -68 Z" ${W} stroke-width="2"/>`
+                        + `<path d="M-19 -79 Q-11 -87 -5 -85 Q-9 -77 -17 -75 Z" ${W} ${thin(1.6)}/><path d="M-17 -79 Q-11 -83 -8 -83" ${thin(0.9)}/>`
+                        + `<path d="M-23 -81 Q-29 -94 -22 -103 Q-17 -108 -10 -105 M-26 -92 L-34 -96 M-23 -99 L-27 -108 M-16 -104 L-14 -111 M-19 -82 Q-14 -93 -7 -97 Q-2 -99 1 -94 M-11 -93 L-12 -102" ${thin(1.8)}/>`
+                        + `<circle cx="-28" cy="-73.5" r="2.1" ${BLK} stroke="none"/><circle cx="-27.4" cy="-74.2" r="0.7" fill="#fff" stroke="none"/>`
+                        + `<ellipse cx="-40.5" cy="-68.5" rx="2.2" ry="1.6" ${BLK} stroke="none"/>`
+                        + `<path d="M-18 -56 q3 2 6 0 M-16 -49 q3 2 6 0 M-15 -39 Q-8 -35 -2 -36 M16 -38 Q22 -41 28 -36" ${thin(1)}/>`;
+                    const dx = dir > 0 ? 360 : 356, dy = HORIZON + 23;
+                    return `<g transform="translate(${dx} ${dy}) scale(${dir * 0.78} 0.78)">${halo(deer, 5.5)}</g>` + tuft(dx - 4, dy + 1);
+                }
+                case 'rabbit': {
+                    // Illustrated sitting cottontail in the center grass, facing either direction
+                    const rx = 200, ry = HORIZON + 28;
+                    const bun = `<path d="M-6 -20 Q-4 -34 1 -34 Q3 -30 -2 -20 Z" ${W} ${thin(1.6)}/>`
+                        + `<path d="M-9 -20 Q-14 -34 -9 -36 Q-5 -33 -6 -20 Z" ${W} ${thin(1.7)}/><path d="M-9 -23 Q-11 -30 -9 -33" ${thin(0.9)}/>`
+                        + `<path d="M-8 0 Q-13 -4 -11 -11 Q-9 -17 -2 -17 Q8 -18 11 -9 Q12 -2 7 0 Z" ${W} stroke-width="1.9"/>`
+                        + `<path d="M-1 -1 Q5 -9 9 -3 M-6 0 H-10 Q-12 0 -11 -2" ${thin(1.3)}/>`
+                        + `<path d="M10 -8 Q15 -9 14 -4 Q15 -1 10 -2 Z" ${W} ${thin(1.5)}/>`
+                        + `<path d="M-13 -16 Q-13 -23 -6 -23 Q-1 -23 0 -17 Q0 -12 -6 -12 Q-12 -12 -13 -16 Z" ${W} stroke-width="1.8"/>`
+                        + `<circle cx="-8.2" cy="-17.8" r="1.9" ${BLK} stroke="none"/><circle cx="-7.7" cy="-18.4" r="0.65" fill="#fff" stroke="none"/>`
+                        + `<circle cx="-13" cy="-16" r="1.1" ${BLK} stroke="none"/>`
+                        + `<path d="M-12 -15 l-4.5 -1.2 M-12 -14 l-4.5 0.6 M-1 -10 q2 1.5 4 0 M2 -6 q2 1.5 4 0" ${thin(0.95)}/>`;
+                    return `<g transform="translate(${rx} ${ry}) scale(${dir * 1.42} 1.42)">${bun}</g>` + tuft(rx, ry + 1);
+                }
+                case 'blackhawks': {
+                    // Three detailed UH-60 Black Hawks in echelon: stepped nose, cockpit/gunner windows, twin turbine hump, rotor blur & canted tail
+                    const heli = (x, y, k = 0.56) => {
+                        const body = `<path d="M0 3 Q0 -5 9 -9 L21 -12 L31 -12 L35 -19 L55 -19 L60 -12 L64 -10 L98 -7 L103 -19 L110 -19 L107 -4 L98 0 L63 4 Q42 10 10 9 Q0 8 0 3 Z"/>`;
+                        const gear = `<path d="M-18 -24 H98 M44 -19 V-24 M106 -22 V-1 M94 -2 H112 M15 9 V14 M45 8 V14 M92 2 V8"/><circle cx="15" cy="15.5" r="2.6"/><circle cx="45" cy="15.5" r="2.6"/><circle cx="92" cy="9.5" r="2"/>`;
+                        const detail = `<path d="M5 -2.5 L12 -8 L22 -9 L22 -2.5 Z M27 -9 H36 V-2.5 H27 Z M40 -8.5 H48 V-3 H40 Z" fill="#fff" stroke="none"/>`
+                            + `<path d="M35 -15 H55 M64 -6 L95 -4 M-12 -26 Q44 -29 92 -26" stroke="#fff" stroke-width="1.3"/>`;
+                        return `<g transform="translate(${x} ${y}) scale(${k})">`
+                            + `<g stroke="#fff" stroke-width="8.5" fill="#fff">${body}${gear}</g>`
+                            + `<g fill="#000" stroke-width="2">${body}</g>`
+                            + `<g stroke-width="2.4" fill="#000">${gear}</g>`
+                            + `${detail}</g>`;
+                    };
+                    return heli(146, 28, 0.52) + heli(216, 50, 0.56) + heli(288, 73, 0.6);
+                }
+                case 'cow': {
+                    // Sculpted Holstein dairy cow in the right meadow grass, facing either direction
+                    const body = 'M-30 -39 Q-28 -49 -16 -49 Q-4 -49 6 -47 Q20 -46 28 -48 Q35 -47 34 -37 Q34 -22 25 -17 Q10 -15 -14 -16 Q-28 -16 -30 -25 Z';
+                    const cow = `<path d="M33 -42 Q42 -34 39 -18" ${thin(1.7)}/><path d="M37 -20 Q39 -13 41 -17 Q42 -12 37 -14 Z" ${BLK} ${thin(1)}/>`
+                        + `<path d="M-23 -17 L-24 -7 L-23 0 M-14 -17 L-15 -7 L-14 0 M16 -17 L18 -7 L16 0 M25 -17 L27 -7 L25 0" stroke-width="2.8"/>`
+                        + `<path d="M-26 0 h5 M-17 0 h5 M13 0 h5 M22 0 h5" stroke-width="3"/>`
+                        + `<path d="M7 -16 Q11 -8 18 -16 M10 -12 V-8.5 M14.5 -12 V-8.5" ${W} ${thin(1.3)}/>`
+                        + `<path d="${body}" ${W} stroke-width="2"/>`
+                        + `<g clip-path="url(#cowClip)" ${BLK} stroke="none">`
+                        + `<path d="M-22 -49 Q-8 -44 -6 -34 Q-12 -28 -22 -32 Q-28 -38 -22 -49 Z"/>`
+                        + `<path d="M4 -38 Q16 -42 20 -31 Q15 -22 4 -25 Q-2 -31 4 -38 Z"/>`
+                        + `<path d="M24 -49 Q34 -46 34 -36 Q26 -35 23 -42 Z"/>`
+                        + `<path d="M-30 -24 Q-22 -24 -21 -16 H-30 Z"/></g>`
+                        + `<path d="${body}" fill="none" stroke-width="2"/>`
+                        + `<path d="M-37 -45 Q-32 -52 -27 -48 Q-31 -43 -37 -45 Z M-46 -45 Q-53 -49 -55 -43 Q-50 -41 -46 -44 Z" ${W} ${thin(1.4)}/>`
+                        + `<path d="M-40 -48 Q-40 -54 -35 -56 M-45 -47 Q-48 -53 -45 -57" ${thin(1.7)}/>`
+                        + `<path d="M-29 -42 Q-35 -50 -44 -47 L-51 -31 Q-53 -23 -45 -22 Q-37 -22 -34 -30 Q-31 -35 -29 -35 Z" ${W} stroke-width="1.9"/>`
+                        + `<path d="M-36 -43 Q-42 -42 -44 -36 Q-39 -34 -35 -38 Z" ${BLK} stroke="none"/>`
+                        + `<ellipse cx="-46" cy="-26.5" rx="7" ry="4.5" ${W} ${thin(1.5)}/><circle cx="-48.8" cy="-26.5" r="1.1" ${BLK}/><circle cx="-43.6" cy="-26.5" r="1.1" ${BLK}/>`
+                        + `<circle cx="-40" cy="-38.5" r="1.8" ${BLK} stroke="none"/><circle cx="-39.5" cy="-39.1" r="0.6" fill="#fff" stroke="none"/>`;
+                    const cx = dir > 0 ? 364 : 354, cy = HORIZON + 24;
+                    return `<defs><clipPath id="cowClip"><path d="${body}"/></clipPath></defs><g transform="translate(${cx} ${cy}) scale(${dir * 0.72} 0.72)">${halo(cow, 5.5)}</g>` + tuft(cx - 2, cy + 1);
+                }
+                case 'armadillo': {
+                    // Illustrated nine-banded nocturnal armadillo in the center grass, facing either direction
+                    const ax = 200, ay = HORIZON + 28;
+                    const arma = `<path d="M13 -4 Q22 -4 31 0.5 Q22 1 13 -0.5 Z" ${W} ${thin(1.4)}/>`
+                        + `<path d="M17 -3.4 V-0.3 M21 -2.8 V0.2 M25 -1.8 V0.5" ${thin(0.9)}/>`
+                        + `<path d="M-10 -1 L-11 2 M-5 -1 L-5 2 M5 -1 L5 2 M10 -1 L11 2" stroke-width="2"/>`
+                        + `<path d="M-16 0 Q-17 -14 0 -15 Q17 -14 16 0 Z" ${W} stroke-width="1.9"/>`
+                        + `<path d="M-7 -13.6 Q-8 -6.5 -7.5 0 M-3.8 -14.6 Q-4.4 -7 -4.1 0 M-0.5 -15 V0 M2.8 -14.6 Q3.4 -7 3.1 0 M6.2 -13.8 Q7 -6.5 6.6 0" ${thin(1.15)}/>`
+                        + `<g ${BLK} stroke="none">${[[-11.5, -8.5], [-13, -4], [-9.8, -4.2], [-10, -10.5], [10.5, -8.5], [12.5, -4], [9.5, -4.2], [9.8, -10.5]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.85"/>`).join('')}</g>`
+                        + `<path d="M-16 -9.5 L-18 -16 L-13.5 -11.5 M-14 -10 L-14.5 -15.5 L-11.5 -11" ${W} ${thin(1.3)}/>`
+                        + `<path d="M-13 -9.5 Q-18 -9.5 -28 -2.5 Q-28.5 0 -25.5 0 H-13 Z" ${W} stroke-width="1.6"/>`
+                        + `<circle cx="-18.5" cy="-5.8" r="1.25" ${BLK} stroke="none"/><circle cx="-18.1" cy="-6.2" r="0.4" fill="#fff" stroke="none"/>`
+                        + `<circle cx="-27.2" cy="-1.6" r="0.9" ${BLK} stroke="none"/>`;
+                    return `<g transform="translate(${ax} ${ay}) scale(${dir * 1.32} 1.32)">${arma}</g>` + tuft(ax, ay + 2);
+                }
+                default:
+                    return '';
+            }
+        }
+
+        // ---------- Holiday drawings ----------
+
+        function usFlag(half) {
+            const px = 312, H = 32 / 13;
+            const shape = 'M0 0 Q12.5 -4 25 0 T50 0 V32 Q37.5 36 25 32 T0 32 Z';
+            const wave = (y) => `M0 ${f(y)} Q12.5 ${f(y - 4)} 25 ${f(y)} T50 ${f(y)}`;
+            let red = '', stars = '';
+            for (let i = 0; i < 13; i += 2) red += wave(H * (i + 0.5)) + ' ';
+            for (let i = 0; i < 4; i++) for (let j = 0; j < 5; j++) {
+                const x = 2.4 + j * 3.9 + (i % 2) * 1.3, y = 2.4 + i * 4.1 - 8 * (x / 25) * (1 - x / 25);
+                stars += `<circle cx="${f(x)}" cy="${f(y)}" r="0.9"/>`;
+            }
+            return `<defs><clipPath id="flagClip"><path d="${shape}"/></clipPath><clipPath id="cantonClip"><rect x="0" y="-6" width="21" height="40"/></clipPath></defs>`
+                + halo(`<path d="M${px} ${HORIZON} V88"/>`, 6) + `<circle cx="${px}" cy="86" r="3" ${W} ${thin(1.6)}/>`
+                + `<g transform="translate(${px} ${half ? 136 : 94})"><path d="${shape}" ${W} stroke="#fff" stroke-width="5"/>`
+                + `<g clip-path="url(#flagClip)"><path d="${red}" stroke-width="${f(H)}" stroke-linecap="butt"/>`
+                + `<g clip-path="url(#cantonClip)"><path d="${wave(8.6)}" stroke-width="17.6" stroke-linecap="butt"/></g>`
+                + `<g fill="#fff" stroke="none">${stars}</g></g><path d="${shape}" ${thin(1.6)}/></g>`;
+        }
+
+        const bat = (x, y, s, lit) => `<path transform="translate(${f(x)} ${f(y)}) scale(${f(s)})" d="M0 -2 L-1.5 -4 L-1 -1 Q-4 -4 -8 -3 Q-11 -4 -13 -1 Q-10 -1 -9 2 Q-7 0 -5 2 Q-3 0 0 3 Q3 0 5 2 Q7 0 9 2 Q10 -1 13 -1 Q11 -4 8 -3 Q4 -4 1 -1 L1.5 -4 Z" ${lit ? 'fill="#fff" stroke="none"' : `${BLK} stroke="#fff" stroke-width="${f(0.8 / s)}"`}/>`;
+        const heart = (x, y, s) => `<path transform="translate(${x} ${y}) scale(${s})" d="M0 6 C-8 0 -10 -6 -5 -9 C-2 -11 0 -9 0 -7 C0 -9 2 -11 5 -9 C10 -6 8 0 0 6 Z" ${BLK} stroke="#fff" stroke-width="${f(1.5 / s)}"/>`;
+
+        function easterEggs() {
+            const deco = [
+                `<path d="M-5.5 0 l2.2 -2.5 l2.2 2.5 l2.2 -2.5 l2.2 2.5 l2.2 -2.5" ${thin(1.3)}/>`,
+                `<path d="M-5 -3.2 H5 M-5 3.2 H5" stroke-width="2"/>`,
+                `<g ${BLK} stroke="none"><circle cx="0" cy="-3.8" r="1.2"/><circle cx="-2.6" cy="0.5" r="1.2"/><circle cx="2.6" cy="0.5" r="1.2"/><circle cx="0" cy="4.2" r="1.2"/></g>`,
+                `<path d="M-5.5 0 H5.5" stroke="#fff" stroke-width="2"/>`
+            ];
+            return [[176, 294, -15, 0], [198, 304, 12, 2], [220, 292, -8, 1], [18, 292, 10, 3], [46, 302, -12, 0], [346, 294, 8, 1], [372, 304, -10, 2], [386, 286, 6, 3]]
+                .map(([x, y, a, k]) => `<g transform="translate(${x} ${y}) rotate(${a})"><ellipse rx="5.8" ry="7.6" ${k === 3 ? BLK : W} ${thin(1.6)}/>${deco[k]}</g>`).join('');
+        }
+
+        function groundhog(w) {
+            let s = w.sunVisible ? `<path d="M210 284 Q226 279 242 286 Q226 292 210 288 Z" ${BLK} stroke="none"/>` : '';
+            s += `<ellipse cx="196" cy="285" rx="18" ry="5.5" ${BLK}/>`;
+            return s + `<g transform="translate(196 284) scale(1.18)">`
+                + `<circle cx="-6" cy="-26" r="2.8" ${W} ${thin(1.4)}/><circle cx="6" cy="-26" r="2.8" ${W} ${thin(1.4)}/>`
+                + `<path d="M-10 0 Q-12 -17 -7 -25 Q0 -32 7 -25 Q12 -17 10 0 Z" ${W} stroke-width="2"/>`
+                + `<circle cx="-3.2" cy="-21" r="1.3" ${BLK}/><circle cx="3.2" cy="-21" r="1.3" ${BLK}/><ellipse cx="0" cy="-17" rx="2" ry="1.4" ${BLK}/>`
+                + `<path d="M-1.4 -15 h2.8 v2.6 h-2.8 Z M0 -15 v2.6" ${W} ${thin(0.9)}/><path d="M-7 -8 q2.5 2 5 0 M2 -8 q2.5 2 5 0" ${thin(1.4)}/></g>`;
+        }
+
+        function turkey(dir = 1) {
+            let t = '';
+            for (let i = 0; i < 9; i++) {
+                t += `<g transform="translate(8 -26) rotate(${-80 + i * 20})"><path d="M0 -6 Q-6 -16 -4 -28 Q0 -33 4 -28 Q6 -16 0 -6 Z" ${W} ${thin(1.8)}/><path d="M-3 -24 Q0 -27 3 -24" stroke-width="2.6"/></g>`;
+            }
+            t += `<path d="M-2 -7 V0 M7 -7 V0 M-6 0 h6 M3 0 h7" stroke-width="2"/>`
+                + `<path d="M-14 -18 Q-14 -34 2 -34 Q18 -34 18 -18 Q18 -6 2 -6 Q-14 -6 -14 -18 Z" ${W} stroke-width="2"/>`
+                + `<path d="M0 -26 q6 4 12 0 M2 -19 q6 4 12 0" ${thin(1.2)}/>`
+                + `<path d="M-8 -24 Q-18 -32 -16 -44 L-10 -44 Q-12 -34 -4 -28 Z" ${W} stroke-width="1.8"/>`
+                + `<circle cx="-14" cy="-47" r="4.5" ${W} stroke-width="1.8"/><path d="M-18 -48 l-5 1.5 l5 1.5 Z" ${W} ${thin(1.2)}/>`
+                + `<path d="M-17.5 -44 q-3 5 0 10" stroke-width="2.6"/><circle cx="-13" cy="-48.5" r="1" ${BLK}/>`;
+            return `<g transform="translate(${dir > 0 ? 356 : 352} ${HORIZON + 20}) scale(${dir * 1.04} 1.04)">${halo(t, 6)}</g>`;
+        }
+
+        function fireworks() {
+            const burst = (cx, cy, rad) => Array.from({ length: 10 }, (_, i) => {
+                const a = i * Math.PI / 5, c = Math.cos(a), s = Math.sin(a);
+                return `M${f(cx + rad * .35 * c)} ${f(cy + rad * .35 * s)} L${f(cx + rad * c)} ${f(cy + rad * s)}`;
+            }).join(' ');
+            return `<path d="${burst(150, 40, 22)} ${burst(320, 90, 18)} ${burst(250, 26, 14)}" stroke="#fff" stroke-width="2"/>`;
+        }
+
+        window.FunWeather.addExtras({ castle, alamo, eggArt, usFlag, bat, heart, easterEggs, groundhog, turkey, fireworks });
+    })();
+</script>
 
 <style>
     html,
@@ -1124,7 +1389,6 @@
     .scene {
         width: 400px;
         height: 480px;
-        border-right: 2px solid #000;
     }
 
     .scene svg {
@@ -1173,25 +1437,31 @@
     .stat {
         display: flex;
         align-items: center;
-        gap: 12px;
-        margin-top: 10px;
+        gap: 8px;
+        margin-top: 8px;
     }
 
     .stat .ico {
-        width: 48px;
-        height: 52px;
+        width: 42px;
+        height: 48px;
+        flex: none;
     }
 
     .stat .v {
         display: flex;
         flex-direction: column;
-        min-width: 0;
+        flex: none;
     }
 
     .big {
         font-weight: 800;
-        font-size: 54px;
+        font-size: 52px;
         line-height: 1;
+        letter-spacing: -0.02em;
+    }
+
+    .big.wide {
+        font-size: 46px;
     }
 
     /* Rain chance + total, and the next sunset/sunrise, stacked to the right of the now temp */
@@ -1200,26 +1470,32 @@
         flex-direction: column;
         gap: 4px;
         margin-left: auto;
+        min-width: 0;
+        padding-left: 6px;
     }
 
     .mini {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 24px;
+        gap: 6px;
+        font-size: 21px;
         font-weight: 700;
         line-height: 1;
         white-space: nowrap;
     }
 
+    .mini.long {
+        font-size: 17px;
+    }
+
     .mini small {
-        font-size: 15px;
+        font-size: 14px;
         margin-left: 2px;
     }
 
     .panel .mini svg {
-        width: 26px;
-        height: 26px;
+        width: 24px;
+        height: 24px;
         stroke-width: 2.5;
     }
 
@@ -1251,13 +1527,21 @@
     }
 
     .chart .th {
-        font-size: 24px;
+        font-size: 23px;
         font-weight: 800;
+        paint-order: stroke;
+        stroke: #fff;
+        stroke-width: 5px;
+        stroke-linejoin: round;
     }
 
     .chart .tl {
-        font-size: 19px;
+        font-size: 18px;
         font-weight: 500;
+        paint-order: stroke;
+        stroke: #fff;
+        stroke-width: 4px;
+        stroke-linejoin: round;
     }
 
     .chart .pp {
@@ -1268,7 +1552,7 @@
     .heads {
         margin-top: 4px;
         border-top: 2px solid #000;
-        padding-top: 6px;
+        padding-top: 5px;
     }
 
     .heads ul {
@@ -1280,15 +1564,15 @@
     .heads li {
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-size: 18px;
+        gap: 9px;
+        font-size: 17px;
         line-height: 1.18;
         margin-top: 5px;
     }
 
     .heads li svg {
-        width: 26px;
-        height: 26px;
+        width: 24px;
+        height: 24px;
         stroke-width: 2.5;
     }
 
@@ -1316,7 +1600,7 @@
         // ---------- Right panel: numbers ----------
 
         // Highlight thresholds (deg F, %, mph)
-        const LOOKAHEAD_DAYS = 6;
+        const LOOKAHEAD_DAYS = 5;  // offsets 0..5 = 6 days, matching the 6-day chart
         const SWING_F = 15;        // day-to-day change in highs
         const FREEZE_F = 32;
         const HARD_FREEZE_F = 28;
@@ -1463,7 +1747,7 @@
         const hlIcon = (k) => `<svg viewBox="0 0 32 32" aria-hidden="true">${HL_ICONS[k] || ''}</svg>`;
 
         // ---------- Highlights (alerts + rules) ----------
-        // Each rule adds at most one candidate. Score = importance minus 4 per day out; top 3 shown in time order.
+        // Each rule adds at most one candidate. Score = importance minus 4 per day out; top `limit` shown in time order.
 
         // "7pm", "tomorrow 9am", "Sat 6pm"
         function alertTime(d, now, sameDayAs) {
@@ -1477,6 +1761,7 @@
 
         // Alert event -> highlight kind, so a rule saying the same thing can step aside
         const alertKind = (ev) => /tornado|thunderstorm/i.test(ev) ? 'storm'
+            : /flood/i.test(ev) ? 'rain'
             : /fog/i.test(ev) ? 'fog'
             : /freez|frost|cold|chill/i.test(ev) ? 'freeze'
             : /heat/i.test(ev) ? 'heat'
@@ -1502,7 +1787,7 @@
         }
 
         // Active: "Flood Watch until tomorrow 6pm". Upcoming: "Freeze Warning Sunday night" (or exact times
-        // past the forecast). Tail = numbers borrowed from the rule it replaced, e.g. ", low of 29 deg".
+        // past the forecast). Tail = numbers borrowed from the rule it replaced, e.g. " · low of 29°".
         function alertText(x, up, now) {
             if (x.on <= now) return x.end ? `${x.ev} until ${alertTime(x.end, now)}${x.tail}` : `${x.ev} in effect${x.tail}`;
             const p = up.find(y => new Date(y.p.startTime) <= x.on && x.on < new Date(y.p.endTime));
@@ -1510,19 +1795,25 @@
             return `${x.ev} from ${alertTime(x.on, now)}${x.end ? ` to ${alertTime(x.end, now, x.on)}` : ''}`;
         }
 
-        function highlights(periods, now, alerts) {
+        function highlights(periods, now, alerts, limit = 2) {
             const up = periods
                 .filter(p => new Date(p.endTime) > now && dayOffset(new Date(p.startTime), now) <= LOOKAHEAD_DAYS)
                 .map(periodInfo);
             const official = alertItems(alerts, now);
             const items = [];
             const when = (i) => whenName(up[i].p, now);
-            const add = (i, score, icon, text) => {
+            const add = (i, score, icon, text, alertDetail = '') => {
                 const s = +new Date(up[i].p.startTime), e = +new Date(up[i].p.endTime);
                 const kind = icon === 'cool' || icon === 'warm' ? 'temp' : icon;
                 // An official alert of the same kind covering this period says it better; give it our numbers
                 const a = official.find(a => a.kind === kind && a.from < e && a.to > s);
-                if (a) { if (!a.tail) a.tail = text.match(/(?: \(\d+%\))?(?:, [^,]+)?$/)[0]; return; }
+                if (a) {
+                    if (!a.tail) {
+                        const raw = alertDetail || (text.match(/, ([^,]+)$/) || [])[1] || '';
+                        if (raw) a.tail = ` \u00B7 ${raw}`;
+                    }
+                    return;
+                }
                 items.push({ t: Math.max(s, +now), icon, text, score: score - 4 * Math.max(0, dayOffset(new Date(s), now)) });
             };
             // Most significant matching period: value minus 3 per day out (so nearer wins close calls)
@@ -1541,21 +1832,22 @@
 
             // Storms (severe outranks every rule)
             let i = find(x => x.severe && (x.thunder || x.pop >= STORM_POP));
-            if (i >= 0) add(i, 100, 'storm', `Severe storms possible ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`);
+            if (i >= 0) add(i, 100, 'storm', `Severe storms possible ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`, rainAmt(up[i]).slice(2) || `${up[i].pop}%`);
             else if ((i = find(x => x.thunder && x.pop >= STORM_POP)) >= 0) {
-                add(i, 80, 'storm', `Storms ${up[i].pop >= 60 ? 'likely' : 'possible'} ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`);
+                add(i, 80, 'storm', `Storms ${up[i].pop >= 60 ? 'likely' : 'possible'} ${when(i)} (${up[i].pop}%)${rainAmt(up[i])}`, rainAmt(up[i]).slice(2) || `${up[i].pop}%`);
             }
 
             // Snow / ice
             if ((i = find(x => (x.snow || x.ice) && x.pop >= SNOW_POP)) >= 0) {
                 const x = up[i], amt = x.amount && x.amount.kind !== 'Rain' ? `, ${x.amount.text}` : '';
-                add(i, 95, 'snow', `${x.ice ? 'Icy mix' : 'Snow'} possible ${when(i)} (${x.pop}%)${amt}`);
+                const detail = x.amount && x.amount.kind !== 'Rain' ? `${x.amount.text} ${x.amount.kind.toLowerCase()}` : `${x.pop}%`;
+                add(i, 95, 'snow', `${x.ice ? 'Icy mix' : 'Snow'} possible ${when(i)} (${x.pop}%)${amt}`, detail);
             }
 
             // Rain (storm periods are covered above)
             if ((i = find(x => x.rain && !x.thunder && x.pop >= RAIN_POP)) >= 0) {
                 const x = up[i], heavy = x.amount?.kind === 'Rain' && x.amount.in >= HEAVY_RAIN_IN;
-                add(i, heavy ? 85 : 65, 'rain', `${heavy ? 'Heavy rain' : `Rain ${x.pop >= 60 ? 'likely' : 'expected'}`} ${when(i)} (${x.pop}%)${rainAmt(x)}`);
+                add(i, heavy ? 85 : 65, 'rain', `${heavy ? 'Heavy rain' : `Rain ${x.pop >= 60 ? 'likely' : 'expected'}`} ${when(i)} (${x.pop}%)${rainAmt(x)}`, rainAmt(x).slice(2) || `${x.pop}%`);
             }
 
             // Freeze: first freezing night, and how cold it gets
@@ -1595,13 +1887,14 @@
                     const day = off <= 0 ? 'today' : off === 1 ? 'tomorrow' : next.toLocaleDateString('en-US', { weekday: 'long', timeZone: TZ });
                     text = `${label} early ${day} (${x.fogWhen})`;
                 }
-                add(i, [0, 40, 55, 72][x.fog], 'fog', text);
+                add(i, [0, 40, 55, 72][x.fog], 'fog', text, x.fogWhen || '');
             }
 
             // Heat
             if ((i = find(x => x.p.isDaytime !== false && (x.temp >= HEAT_F || x.heatIndex >= HEAT_INDEX_F), x => Math.max(x.temp, x.heatIndex))) >= 0) {
                 const x = up[i];
-                add(i, 50, 'heat', x.heatIndex >= HEAT_INDEX_F ? `Heat index up to ${x.heatIndex}\u00B0 ${when(i)}` : `Hot ${when(i)}, high of ${x.temp}\u00B0`);
+                add(i, 50, 'heat', x.heatIndex >= HEAT_INDEX_F ? `Heat index up to ${x.heatIndex}\u00B0 ${when(i)}` : `Hot ${when(i)}, high of ${x.temp}\u00B0`,
+                    x.heatIndex >= HEAT_INDEX_F ? `heat index ${x.heatIndex}\u00B0` : `high of ${x.temp}\u00B0`);
             }
 
             official.forEach(x => items.push({ ...x, text: alertText(x, up, now) }));
@@ -1612,7 +1905,7 @@
                 const dry = up.every(x => x.pop < 30);
                 return [{ icon: 'calm', text: `${dry ? 'Dry and quiet' : 'Nothing major'} through ${last}${highs.length ? `, highs ${Math.min(...highs)}\u2013${Math.max(...highs)}\u00B0` : ''}` }];
             }
-            return items.sort((a, b) => b.score - a.score).slice(0, 3).sort((a, b) => a.t - b.t || b.score - a.score);
+            return items.sort((a, b) => b.score - a.score).slice(0, limit).sort((a, b) => a.t - b.t || b.score - a.score);
         }
 
         // ---------- Week: per-day summary + day icons ----------
@@ -1674,7 +1967,7 @@
         function trendChart(days, width) {
             // Inset the columns so labels in the outer ones (e.g. "58°" in a wider device font) don't clip
             const inset = 8, n = days.length, col = (width - 2 * inset) / n, cx = (i) => inset + col * i + col / 2;
-            const top = 126, bot = 226;   // y range for the data points
+            const top = 114, bot = 204;   // y range for the data points
             const temps = days.flatMap(d => [d.hi, d.lo]).filter(isFinite);
             const min = Math.min(...temps), max = Math.max(...temps), span = Math.max(1, max - min);
             const y = (t) => bot - (bot - top) * (t - min) / span;
@@ -1684,19 +1977,19 @@
             let s = '';
             days.forEach((d, i) => {
                 const x = cx(i);
-                if (d.off === 0) s += `<rect x="${f(x - 30)}" y="6" width="60" height="22" rx="11" fill="#000" stroke="none"/>`;
-                s += `<text class="dn${d.off === 0 ? ' on' : ''}" x="${f(x)}" y="22">${d.name.toUpperCase()}</text>`;
-                s += `<svg x="${f(x - 20)}" y="30" width="40" height="40" viewBox="0 0 32 32">${WX[d.icon] || WX.cloud}</svg>`;
-                if (d.pop >= 20) s += `<text class="pp" x="${f(x)}" y="90">${d.pop}%</text>`;
+                if (d.off === 0) s += `<rect x="${f(x - 30)}" y="5" width="60" height="21" rx="10.5" fill="#000" stroke="none"/>`;
+                s += `<text class="dn${d.off === 0 ? ' on' : ''}" x="${f(x)}" y="20">${d.name.toUpperCase()}</text>`;
+                s += `<svg x="${f(x - 19)}" y="28" width="38" height="38" viewBox="0 0 32 32">${WX[d.icon] || WX.cloud}</svg>`;
+                if (d.pop >= 20) s += `<text class="pp" x="${f(x)}" y="82">${d.pop}%</text>`;
             });
             s += `<path d="${line('hi')}" stroke-width="4"/>`;
             s += `<path d="${line('lo')}" stroke-width="2" stroke-dasharray="5 5"/>`;
             days.forEach((d, i) => {
                 const x = cx(i);
-                if (isFinite(d.hi)) s += `<circle cx="${f(x)}" cy="${f(y(d.hi))}" r="5" fill="#000"/><text class="th" x="${f(x)}" y="${f(y(d.hi) - 11)}">${deg(d.hi)}</text>`;
-                if (isFinite(d.lo)) s += `<circle cx="${f(x)}" cy="${f(y(d.lo))}" r="4.5" fill="#fff" stroke-width="2.5"/><text class="tl" x="${f(x)}" y="${f(y(d.lo) + 24)}">${deg(d.lo)}</text>`;
+                if (isFinite(d.hi)) s += `<circle cx="${f(x)}" cy="${f(y(d.hi))}" r="5" fill="#000"/><text class="th" x="${f(x)}" y="${f(y(d.hi) - 10)}">${deg(d.hi)}</text>`;
+                if (isFinite(d.lo)) s += `<circle cx="${f(x)}" cy="${f(y(d.lo))}" r="4.5" fill="#fff" stroke-width="2.5"/><text class="tl" x="${f(x)}" y="${f(y(d.lo) + 21)}">${deg(d.lo)}</text>`;
             });
-            return `<svg viewBox="0 0 ${width} 256" width="${width}" height="256" role="img" aria-label="Highs and lows for the next ${n} days">${s}</svg>`;
+            return `<svg viewBox="0 0 ${width} 234" width="${width}" height="234" role="img" aria-label="Highs and lows for the next ${n} days">${s}</svg>`;
         }
 
         function renderPanel(period, w, periods, now, current, location, alerts) {
@@ -1705,9 +1998,11 @@
 
             // Now: observed temperature, falling back to the current forecast period
             const nowT = isFinite(nowTempF(current)) ? nowTempF(current) : w.temp;
+            const nowStr = deg(nowT);
 
             // Rain chance + expected total for the current period
             const total = info.amount ? `${info.amount.text}${info.amount.kind === 'Rain' ? '' : ' ' + info.amount.kind.toLowerCase()}` : info.pop < 20 ? 'Dry' : '';
+            const rainPlain = `${info.pop}%${total ? ` · ${total}` : ''}`;
             const rain = `${info.pop}%${total ? ` &middot; ${total}` : ''}`;
 
             // By day the next sunset; at night the next sunrise
@@ -1720,7 +2015,7 @@
             }
 
             let hl = [];
-            try { hl = highlights(periods, now, alerts).slice(0, 2); } catch (e) { hl = []; }
+            try { hl = highlights(periods, now, alerts, 2); } catch (e) { hl = []; }
 
             const ts = current?.timestamp ? new Date(current.timestamp) : now;
             document.getElementById('panel').innerHTML = `
@@ -1730,9 +2025,9 @@
                 </div>
                 <div class="stat">
                     <span class="ico">${ICONS.thermo}</span>
-                    <div class="v"><span class="big">${deg(nowT)}</span></div>
+                    <div class="v"><span class="big${nowStr.length >= 4 ? ' wide' : ''}">${nowStr}</span></div>
                     <div class="minis">
-                        <div class="mini">${ICONS.drop(info.pop)}<span>${rain}</span></div>
+                        <div class="mini${rainPlain.length >= 13 ? ' long' : ''}">${ICONS.drop(info.pop)}<span>${rain}</span></div>
                         ${sunRow}
                     </div>
                 </div>
@@ -1752,13 +2047,13 @@
                 // \n and \" escapes intact (alert instructions contain both).
                 let alerts = null;
                 try { alerts = JSON.parse(String.raw`{{alerts|json}}` || 'null'); } catch (e) { alerts = null; }
-                // Optional local-preview overrides: window.FUN_PREVIEW = { now: ISO, egg: 'owl' }
+                // Optional local-preview overrides: window.FUN_PREVIEW = { now: ISO, egg: 'owl', look: { swim: true }, w: {} }
                 const pv = window.FUN_PREVIEW || {};
                 const now = pv.now ? new Date(pv.now) : new Date();
                 const period = pickPeriod(forecast, now);
-                const w = analyze(period);
+                const w = Object.assign(analyze(period), pv.w || {});
                 const egg = 'egg' in pv ? pv.egg : pickEgg(w, now);
-                document.getElementById('scene').innerHTML = drawScene(w, egg, now);
+                document.getElementById('scene').innerHTML = drawScene(w, egg, now, pv.look);
                 renderPanel(period, w, getPeriods(forecast), now, current, location, alerts);
             } catch (err) {
                 document.getElementById('scene').innerHTML = `<div style="padding:16px; font:700 24px system-ui">Render error</div><div style="padding:0 16px; font:400 18px system-ui">${String(err)}</div>`;

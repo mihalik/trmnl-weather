@@ -41,9 +41,9 @@ The renderer is flexible, but the simplest input is NOAA/NWS style:
 
 An alternate, self-contained view using the same Liquid data. The left half is an American Gothic style 1-bit line drawing of the two of us in front of a farmhouse, dressed for today's forecast period (tonight's after dark):
 
-- Clothing by temperature: tank tops (90°+), t-shirts (72°+), long sleeves (45°+), coats and hats below that (scarves below 32°). On about 1 in 10 tank-top days (rolled once per day) it's a bikini top and shirtless instead. About 1 day in 10 his tee/tank gets a print: Keep Austin Weird, an Apple logo, Texas with a star on Austin, or Y'ALL.
-- Sky by forecast: sun + sunglasses, clouds, rain + umbrella, lightning, snow, fog, wind lines; black starry sky at night with the true moon phase (Meeus algorithm, accurate to minutes) and a big glowing moon on the night of the full moon
-- Rare easter eggs (about 1 hour in 10, stable within the hour): owl on the roof, airplane, hot air balloon, geese, shooting star, UFO, kite, rainbow, snowman, cat in the window, a bird on his head, Bigfoot behind the tree, a deer, a rabbit, a formation of Black Hawk helicopters, a Holstein cow, cowboy hats, an armadillo, and (rarer, roughly every 3 weeks) the house swapped for a castle or the Alamo
+- Clothing by temperature: tank tops (90°+), t-shirts (72°+), long sleeves (45°+), coats and hats below that (scarves below 32°). On about 1 in 10 sunny tank-top days (rolled once per day) it's a bikini top and shirtless instead. Occasionally his tee/tank gets a print or chest pocket (Keep Austin Weird, Apple logo, Texas with a star on Austin, Y'ALL, or pocket) and her top gets a pattern (stripes, stars, polka dots, or a floral sprig). On 100°F+ sunny days, heat shimmer rises off the roof with sweat drops.
+- Sky & landscape by forecast and season: sun + sunglasses, clouds, rain + umbrella, forked lightning, snow (with drifted ground and snow-capped eaves), layered fog banks, leafy wind gusts; seasonal trees and lawn (spring blossoms, summer foliage, falling autumn leaves, bare winter branches); black starry sky at night with the true moon phase (Meeus algorithm, accurate to minutes) and a big glowing moon on the night of the full moon
+- Easter eggs (about 1 hour in 4, stable within the hour; rarer for sillier/house-swap ones): owl on the roof, airplane, hot air balloon, geese, shooting star, UFO, kite, rainbow, snowman, cat in the window, a bird on his head, a deer, a rabbit, a formation of Black Hawk helicopters, a Holstein cow, cowboy hats, a nocturnal armadillo, and (extra rare) the house swapped for a castle or the Alamo. Yard animals stand in the grass and can face either direction.
 - Holidays and seasons:
   - US flag on a yard pole for Presidents Day, Memorial Day (half-staff until noon), Flag Day, July 3–4, Labor Day, Patriot Day (half-staff), and Veterans Day
   - Groundhog Day: a groundhog by the door, casting a shadow if it's sunny
@@ -60,18 +60,20 @@ The right half shows:
 - A 6-day trend chart starting today: day names (today's in a black pill), weather icons, rain chances of 20%+, and highs (thick line) and lows (dashed line) on one scale, so warming and cooling trends read from across the room
 - **Heads Up**: up to 2 one-line highlights from rules over the next 6 days: severe storms, storms, snow/ice, rain, freezes, big temperature swings (15°+), wind (25 mph or gusts 35+), fog (patchy, areas of, or dense, with timing like "before 9am"), and heat (100° or heat index 108+). Each rule picks its most significant period; the top 2 by importance (nearer days win ties) are shown in time order. Rain items include the expected amount ("Heavy rain" at 1 inch+ in one period). Active NWS alerts from the API's `alerts` field (marked with a black warning triangle) rank above the rules by severity, e.g. "Flood Watch until tomorrow 6pm" or "Freeze Warning Sunday night, low of 29°"; an alert replaces a rule item of the same kind for the same period and keeps its numbers. Quiet weeks get a single "Dry and quiet through ..." line. Thresholds are constants at the top of the highlights code. Both `alerts` and `precipitation` are optional, so the view still works with data that lacks them.
 
-## Previewing the scene
+## Previewing the scene and full display
 
-`scripts/preview-scene.js` renders the left-hand scene offline for any date, weather, easter egg, or outfit, and lays the results out on a labeled contact sheet (`/tmp/fun-preview/sheet.png`; the PNG uses macOS Quick Look):
+`scripts/preview-scene.js` renders either the left-hand scene (SVG contact sheet) or the full 800×480 display (`--full`, both scene and right-hand panel) offline for any date, weather, alert, easter egg, or outfit, writing `/tmp/fun-preview/sheet.png` on macOS:
 
 ```sh
-node scripts/preview-scene.js --eggs                 # every easter egg
-node scripts/preview-scene.js --holidays             # every holiday this year
+node scripts/preview-scene.js --eggs                 # every easter egg (scene only)
+node scripts/preview-scene.js --holidays             # every holiday this year (scene only)
+node scripts/preview-scene.js --full --states        # 6 full 800×480 scenarios + contact sheet
+node scripts/preview-scene.js --full                 # default 800×480 render from example-weather.json
 node scripts/preview-scene.js hot='{"period":{"temperature":98},"look":{"swim":true}}'
 node scripts/preview-scene.js --crop 150,150,250,140 xmas='{"now":"2026-12-25T14:00:00-06:00"}'
 ```
 
-See the comment at the top of the script for all options. The right-hand panel needs the full page; check it with a TRMNL screenshot after pushing.
+See the comment at the top of the script for all options.
 
 ## Deploying
 
@@ -84,7 +86,7 @@ python3 scripts/push-trmnl.py index.html   # no marker: whole file -> markup_ful
 
 The endpoint rejects requests over about 64 KB, so:
 
-- `fun.html` is split at its `<!-- trmnl:split -->` line. Everything above it (the scene-drawing script, which exposes `window.FunWeather`) goes to `markup_shared`, which TRMNL prepends to every layout. Everything below it (styles, `<main>`, and the panel script) goes to `markup_full`. Each slot has its own ~64 KB budget. Code below the marker that needs a shared helper takes it from `window.FunWeather`. Add a name to the shared script's `return { ... }` and to the panel script's destructuring line.
+- `fun.html` is split at its `<!-- trmnl:split -->` line. Everything above it (core scene-drawing + weather helpers, exposed on `window.FunWeather`) goes to `markup_shared`, which TRMNL prepends to every layout. Everything below it (`<script id="scene-extras">` for easter-egg/holiday/alternate-house art, styles, `<main>`, and the panel script) goes to `markup_full`. Each slot has its own ~64 KB budget. Code below the marker that needs a shared helper takes it from `window.FunWeather`. Add a name to the shared script's `return { ... }` (or `svg`) and to the destructuring line below.
 - Indentation, blank lines, and full-line `//` comments are stripped before uploading. Rendering is unchanged, but the hosted copy won't match the local file byte for byte.
 
 The script checks sizes before uploading anything. If a slot is still too large, move the marker or paste into the TRMNL web editor instead.
