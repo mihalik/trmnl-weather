@@ -271,22 +271,25 @@
             return 2451550.09766 + 29.530588861 * k + 0.00015437 * T * T + c;
         }
 
-        // p: 0 = new, 0.5 = full. full: the full moon lands on this local date or within the current period.
-        function moonInfo(now, w) {
+        // Noon-to-noon local "night" key (hours before noon belong to the night that started the evening before).
+        function nightKey(d) {
+            const { year, month, day, hour } = localParts(d);
+            return Date.UTC(year, month - 1, day - (hour < 12 ? 1 : 0));
+        }
+
+        // p: 0 = new, 0.5 = full. full: the full moon lands in the same local noon-to-noon night.
+        function moonInfo(now) {
             const jd = now / 864e5 + 2440587.5;
             let k = Math.floor((jd - 2451550.09766) / 29.530588861);
             while (lunarPhaseJD(k) > jd) k--;
             while (lunarPhaseJD(k + 1) <= jd) k++;
             const n0 = lunarPhaseJD(k), n1 = lunarPhaseJD(k + 1);
             const fullAt = new Date((lunarPhaseJD(k + 0.5) - 2440587.5) * 864e5);
-            const a = localParts(fullAt), b = localParts(now);
-            const sameDay = a.year === b.year && a.month === b.month && a.day === b.day;
-            const inPeriod = w.start && w.end && fullAt >= w.start && fullAt < w.end;
-            return { p: (jd - n0) / (n1 - n0), full: sameDay || inPeriod };
+            return { p: (jd - n0) / (n1 - n0), full: nightKey(fullAt) === nightKey(now) };
         }
 
-        function moon(cx, cy, now, w) {
-            const { p, full } = moonInfo(now, w);
+        function moon(cx, cy, now) {
+            const { p, full } = moonInfo(now);
             if (full) {
                 // Full moon night: bigger moon with craters, glowing rings and sparkles
                 const r = 24;
@@ -988,7 +991,7 @@
             // Sky
             if (w.night) {
                 if (w.sky !== 'overcast' && w.sky !== 'cloudy' && w.sky !== 'fog') s += stars(rng(7));
-                if (w.sky !== 'overcast' && w.sky !== 'fog') s += moon(62, 58, now, w);
+                if (w.sky !== 'overcast' && w.sky !== 'fog') s += moon(62, 58, now);
                 if (season.fireworks) s += ex('fireworks');
             } else if (w.sunVisible) {
                 s += sun(62, 58);

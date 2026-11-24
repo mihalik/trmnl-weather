@@ -129,7 +129,7 @@ if (wantStates) {
             ]
         }],
         ['quietFullMoon', {
-            now: '2026-11-24T21:00:00-06:00', baseTime: '2026-11-24T18:00:00-06:00', currentTemp: 54, egg: 'owl',
+            now: '2026-11-23T21:00:00-06:00', baseTime: '2026-11-23T18:00:00-06:00', currentTemp: 54, egg: 'owl',
             periods: [
                 [false, 48, 0, 'Clear'], [true, 71, 5, 'Sunny'],
                 [false, 50, 5, 'Clear'], [true, 73, 10, 'Mostly Sunny'],
